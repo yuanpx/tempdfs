@@ -6,7 +6,11 @@ use self::crypto::digest::Digest;
 
 pub struct TaskInfo {
     arg: TaskArg,
-    
+    data: Vec<u8>,
+    offset: i32,
+    req_count: i64,
+    finish_callback: fn(),
+    thread_data: fn(),
 }
 
 pub enum TaskArg {
