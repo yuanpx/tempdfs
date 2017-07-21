@@ -7,6 +7,9 @@ use futures::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use std::io::prelude::*;
 type IdType = u32;
 
+use super::handler::Event;
+use super::handler;
+
 pub enum DioCmd {
     Read(ReadOp),
     Write(IdType),
@@ -22,6 +25,18 @@ pub struct ReadOp {
 
 pub struct JobContext {
     file: File,
+}
+
+#[derive(Serialize, Deserialize)]
+struct FileBuffer{
+    buf_type: u8, //1:part, 2.end
+    file_buf: Vec<u8>
+}
+
+impl Event for FileBuffer {
+    fn event_id() -> u32 {
+        3
+    }
 }
 
 pub fn dio_worker_thread(rx: mpsc::Receiver<DioCmd>) {
@@ -50,7 +65,21 @@ pub fn handle_read_file(read_op: &mut ReadOp) {
     while continue_flag {
         let mut buf: Vec<u8> = vec![0;BUFF_LEN];
         let read_len = file.read(&mut buf[..]).unwrap();
+        let file_buf = if read_len < BUFF_LEN {
+            continue_flag = false;
+            buf.split_off(read_len);
+            FileBuffer {
+                buf_type: 2,
+                file_buf: buf,
+            }
+        } else {
+           FileBuffer {
+                buf_type: 1,
+                file_buf: buf,
+           }
+        }; 
 
-
+        let msg = handler::gen_message(&file_buf);
+        read_op.tx.send(msg).unwrap();
     }
 }

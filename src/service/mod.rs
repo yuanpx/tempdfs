@@ -12,7 +12,6 @@ pub struct Service {
 }
 
 
-
 pub fn test_process_event(_: &mut Service, _ : nio_sender, id: IdType, _: &[u8]) {
     println!("test: {}", id);
 }
