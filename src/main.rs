@@ -22,28 +22,32 @@ use tokio_core::net::TcpListener;
 use tokio_core::reactor::Core;
 use tokio_io::io;
 use tokio_io::AsyncRead;
+use std::sync::mpsc;
+use std::net::SocketAddr;
 
 
 
 use std::vec::Vec;
 
-mod handler;
+mod service;
 
-type process_fn<T> = fn(&mut T, u32, &[u8]);
+type process_fn<T, I> = fn(&mut T,tx: service::nio_sender, I, &[u8]);
 
 
 
 struct Context<T> {
-    methods: Option<HashMap<u32, process_fn<T>>>,
+    methods: Option<HashMap<u32, process_fn<T, SocketAddr>>>,
+    connections: HashMap<SocketAddr, service::nio_sender>,
     service: Option<T>,
 }
 
 
-impl <T:handler::Gen> Context<T>{
-    fn new() -> Self {
+impl <T> Context<T>{
+    fn new(t: T) -> Self {
         Context{
             methods: Some(HashMap::new()),
-            service: Some(T::new()),
+            connections: HashMap::new(),
+            service: Some(t),
         }
     }
 
@@ -61,10 +65,13 @@ fn main() {
     let socket = TcpListener::bind(&addr, &handle).unwrap();
     println!("Listening on: {}", addr);
 
-    let connections = Rc::new(RefCell::new(HashMap::new()));
-    let main_context = Rc::new(RefCell::new(Context::new()));
+    let (dtx, drx) = mpsc::channel();
+    let mut service = service::Service::new(dtx.clone());
+
+    //let connections = Rc::new(RefCell::new(HashMap::new()));
+    let main_context = Rc::new(RefCell::new(Context::new(service)));
     let mut process_methods = main_context.borrow_mut().methods.take().unwrap();
-    process_methods.insert(1, handler::test_process_event);
+    process_methods.insert(1, service::test_process_event);
 
     main_context.borrow_mut().methods = Some(process_methods);
 
@@ -73,7 +80,8 @@ fn main() {
         println!("New Connection: {}", addr);
         let (reader, writer) = stream.split();
         let (tx, rx) = futures::sync::mpsc::unbounded::<Vec<u8>>();
-        connections.borrow_mut().insert(addr, tx);
+        //connections.borrow_mut().insert(addr, tx);
+        main_context.borrow_mut().connections.insert(addr, tx);
         let main_context_inner = main_context.clone();
         let reader = BufReader::new(reader);
 
@@ -82,19 +90,23 @@ fn main() {
             let header_buf: [u8;4] = [0;4];
             let header = io::read_exact(reader, header_buf);
             let body = header.and_then(|(reader, header)| {
-                let body_len: u32 = handler::get_u32_length(&header[..]);
+                let body_len: u32 = service::handler::get_u32_length(&header[..]);
                 let buff: Vec<u8> = vec![0;body_len as usize];
                 io::read_exact(reader, buff)
             });
 
             body.map(move |(reader, vec)|{
-                let event_id: u32 = handler::get_u32_length(&vec[0..4]);
+                let event_id: u32 = service::handler::get_u32_length(&vec[0..4]);
                 {
                     let process_methods = main_context_inner.borrow_mut().methods.take().unwrap();
                     let mut service = main_context_inner.borrow_mut().service.take().unwrap();
+                    let mut tx = {
+                        main_context_inner.borrow_mut().connections.get(&addr).unwrap().clone()
+                    };
+
                     {
                         let method = process_methods.get(&event_id).unwrap();
-                        method(&mut service, event_id, &vec[4..]);
+                        method(&mut service,tx,  addr, &vec[4..]);
                     }
 
                     main_context_inner.borrow_mut().methods = Some(process_methods);
@@ -110,11 +122,13 @@ fn main() {
             amt.map_err(|_|())
         });
 
-        let connections_in = connections.clone();
+        //let connections_in = connections.clone();
+        let main_context_in = main_context.clone();
         let socket_reader = socket_reader.map_err(|_|());
         let connection = socket_reader.map(|_|()).select(socket_writer.map(|_|()));
         handle.spawn(connection.then(move |_| {
-            connections_in.borrow_mut().remove(&addr);
+            //connections_in.borrow_mut().remove(&addr);
+            main_context_in.borrow_mut().connections.remove(&addr);
             println!("Connection {} closed.", addr);
             Ok(())
         }));

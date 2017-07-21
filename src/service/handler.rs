@@ -16,8 +16,9 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::sync::mpsc;
 
-mod dio;
-
+pub trait Event {
+    fn event_id() -> u32;
+}
 
 pub fn get_u32_buff(len: u32) -> [u8;4] {
     unsafe {
@@ -30,47 +31,6 @@ pub fn get_u32_length(buf_slice: &[u8]) -> u32 {
     buf.copy_from_slice(buf_slice);
     unsafe {
         std::mem::transmute::<[u8;4], u32>(buf)
-    }
-    
-}
-
-pub trait Event {
-    fn event_id() -> u32;
-}
-
-#[derive(Serialize, Deserialize)]
-struct TestStruct {
-    test_i8: i8,
-    test_i32: i32,
-}
-
-#[derive(Serialize, Deserialize)]
-struct ReadFileOp {
-    file_name: String,
-}
-
-impl Event for ReadFileOp {
-    fn event_id() -> u32 {
-        2
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-struct FileBuffer{
-    buf_type: u8, //1:part, 2.end
-    file_buf: Vec<u8>
-}
-
-impl Event for FileBuffer {
-    fn event_id() -> u32 {
-        3
-    }
-}
-
-
-impl Event for TestStruct {
-    fn event_id() -> u32 {
-        1
     }
 }
 
@@ -201,32 +161,4 @@ pub struct StorageclientInfo {
     extra_arg: ExtraArg,
     clean_func: fn(),
 }
-
-pub struct Service {
-    dio_tx: mpsc::Sender<>
-
-}
-
-pub fn test_process_event(_: &mut Service, event_id: u32, _: &[u8]) {
-    println!("test: {}", event_id);
-}
-
-
-
-
-impl Gen for Service {
-    fn new() -> Self {
-        Service{}
-    }
-}
-
-pub trait Gen {
-    fn new() -> Self;
-}
-
-pub fn handle_read_file(_: &mut Service, _: u32, buf: &[u8]) {
-    let read_file_op: ReadFileOp = gen_obj(buf);
-
-}
-
 
