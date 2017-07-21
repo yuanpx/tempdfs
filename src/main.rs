@@ -14,7 +14,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::iter;
 use std::env;
-use std::io::{Error, ErrorKind, BufReader};
+use std::io::{Error, BufReader};
 
 use futures::Future;
 use futures::stream::{self, Stream};
@@ -24,12 +24,6 @@ use tokio_io::io;
 use tokio_io::AsyncRead;
 
 
-use rmps::Deserializer;
-use std::io::Cursor;
-
-use serde::Serialize;
-use serde::Deserialize;
-use rmps::Serializer;
 
 use std::vec::Vec;
 
@@ -88,13 +82,13 @@ fn main() {
             let header_buf: [u8;4] = [0;4];
             let header = io::read_exact(reader, header_buf);
             let body = header.and_then(|(reader, header)| {
-                let body_len: u32 = get_u32_length(&header[..]);
+                let body_len: u32 = handler::get_u32_length(&header[..]);
                 let buff: Vec<u8> = vec![0;body_len as usize];
                 io::read_exact(reader, buff)
             });
 
             body.map(move |(reader, vec)|{
-                let event_id: u32 = get_u32_length(&vec[0..4]);
+                let event_id: u32 = handler::get_u32_length(&vec[0..4]);
                 {
                     let process_methods = main_context_inner.borrow_mut().methods.take().unwrap();
                     let mut service = main_context_inner.borrow_mut().service.take().unwrap();
@@ -131,65 +125,6 @@ fn main() {
     core.run(srv).unwrap();
 }
 
-
-
-fn get_u32_buff(len: u32) -> [u8;4] {
-    unsafe {
-        std::mem::transmute::<u32, [u8;4]>(len)
-    }
-}
-
-fn get_u32_length(buf_slice: &[u8]) -> u32 {
-    let mut buf: [u8;4] = [0;4];
-    buf.copy_from_slice(buf_slice);
-    unsafe {
-        std::mem::transmute::<[u8;4], u32>(buf)
-    }
-    
-}
-
-trait Event {
-    fn event_id() -> u32;
-}
-
-#[derive(Serialize, Deserialize)]
-struct TestStruct {
-    test_i8: i8,
-    test_i32: i32,
-}
-
-impl Event for TestStruct {
-    fn event_id() -> u32 {
-        1
-    }
-}
-
-fn gen_message<T>(t: &T) -> Vec<u8>
-    where T: Serialize + Event
-{
-    let mut obj_buf = Vec::new();
-    t.serialize(&mut Serializer::new(&mut obj_buf)).unwrap();
-    let mut buf = Vec::new();
-    let mut obj_len: u32 = obj_buf.len() as u32;
-    obj_len = obj_len + 4;
-    let event_id: u32 = T::event_id();
-    let obj_len_buf = get_u32_buff(obj_len);
-    let event_id_buf = get_u32_buff(event_id);
-    buf.extend_from_slice(&obj_len_buf[..]);
-    buf.extend_from_slice(&event_id_buf[..]);
-    buf.append(&mut obj_buf);
-
-    buf
-}
-
-fn gen_obj<'a, T>(buf: &[u8]) -> T
-    where T: Deserialize<'a> {
-
-    let cur = Cursor::new(buf);
-    let mut de = Deserializer::new(cur);
-    let obj: T = Deserialize::deserialize(&mut de).unwrap();
-    obj
-}
 
 
 

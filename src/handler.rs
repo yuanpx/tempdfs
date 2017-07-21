@@ -1,7 +1,83 @@
 extern crate crypto;
+extern crate serde;
+extern crate rmp;
+extern crate rmp_serde as rmps;
+use serde::Serialize;
+use serde::Deserialize;
+use rmps::Serializer;
+use std::io::Cursor;
+use rmps::Deserializer;
+
+use std;
 
 use self::crypto::md5::Md5;
 use self::crypto::digest::Digest;
+pub fn get_u32_buff(len: u32) -> [u8;4] {
+    unsafe {
+        std::mem::transmute::<u32, [u8;4]>(len)
+    }
+}
+
+pub fn get_u32_length(buf_slice: &[u8]) -> u32 {
+    let mut buf: [u8;4] = [0;4];
+    buf.copy_from_slice(buf_slice);
+    unsafe {
+        std::mem::transmute::<[u8;4], u32>(buf)
+    }
+    
+}
+
+pub trait Event {
+    fn event_id() -> u32;
+}
+
+#[derive(Serialize, Deserialize)]
+struct TestStruct {
+    test_i8: i8,
+    test_i32: i32,
+}
+
+impl Event for TestStruct {
+    fn event_id() -> u32 {
+        1
+    }
+}
+
+pub fn gen_message<T>(t: &T) -> Vec<u8>
+    where T: Serialize + Event
+{
+    let mut obj_buf = Vec::new();
+    t.serialize(&mut Serializer::new(&mut obj_buf)).unwrap();
+    let mut buf = Vec::new();
+    let mut obj_len: u32 = obj_buf.len() as u32;
+    obj_len = obj_len + 4;
+    let event_id: u32 = T::event_id();
+    let obj_len_buf = get_u32_buff(obj_len);
+    let event_id_buf = get_u32_buff(event_id);
+    buf.extend_from_slice(&obj_len_buf[..]);
+    buf.extend_from_slice(&event_id_buf[..]);
+    buf.append(&mut obj_buf);
+
+    buf
+}
+
+pub fn gen_obj<'a, T>(buf: &[u8]) -> T
+    where T: Deserialize<'a> {
+
+    let cur = Cursor::new(buf);
+    let mut de = Deserializer::new(cur);
+    let obj: T = Deserialize::deserialize(&mut de).unwrap();
+    obj
+}
+
+
+
+enum NioStorage {
+    INIT,
+    RECV,
+    SEND,
+    CLOSE,
+}
 
 
 pub struct TaskInfo {
@@ -72,8 +148,6 @@ pub struct StorageFileContext {
     log_callback: fn(),
 
     tv_deal_start: i32,
-
-
 }
 
 struct StorageServer {
@@ -85,7 +159,7 @@ enum ExtraArg{}
 pub struct StorageclientInfo {
     nio_thread_index: i32,
     canceled: i32,
-    stage: u8,
+    stage: NioStorage,
     storage_server_id: String,
     file_context: StorageFileContext,
     total_length: i64,
