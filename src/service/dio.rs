@@ -1,6 +1,5 @@
 extern crate futures;
 use std::sync::mpsc;
-use std::net::Ipv4Addr;
 use std::collections::HashMap;
 use std::fs::File;
 use futures::sync::mpsc::{UnboundedReceiver, UnboundedSender};

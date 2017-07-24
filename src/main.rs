@@ -31,7 +31,7 @@ use std::vec::Vec;
 
 mod service;
 
-type process_fn<T, I> = fn(&mut T,tx: service::nio_sender, I, &[u8]);
+type process_fn<T, I> = fn(&mut T, tx: service::nio_sender, I, &[u8]);
 
 
 
@@ -42,21 +42,20 @@ struct Context<T> {
 }
 
 
-impl <T> Context<T>{
+impl<T> Context<T> {
     fn new(t: T) -> Self {
-        Context{
+        Context {
             methods: Some(HashMap::new()),
             connections: HashMap::new(),
             service: Some(t),
         }
     }
-
 }
 
 fn main() {
     println!("Hello, world!");
 
-    let addr = env::args().nth(1).unwrap_or("127.0.0.1:8180".to_string()); 
+    let addr = env::args().nth(1).unwrap_or("127.0.0.1:8180".to_string());
     let addr = addr.parse().unwrap();
 
     let mut core = Core::new().unwrap();
@@ -68,7 +67,7 @@ fn main() {
     let (dtx, drx) = mpsc::channel();
     let mut service = service::Service::new(dtx.clone());
 
-    //let connections = Rc::new(RefCell::new(HashMap::new()));
+    // let connections = Rc::new(RefCell::new(HashMap::new()));
     let main_context = Rc::new(RefCell::new(Context::new(service)));
     let mut process_methods = main_context.borrow_mut().methods.take().unwrap();
     process_methods.insert(1, service::test_process_event);
@@ -76,18 +75,19 @@ fn main() {
     main_context.borrow_mut().methods = Some(process_methods);
 
 
-    let srv = socket.incoming().for_each(move |(stream, addr)|{
+    let srv = socket.incoming().for_each(move |(stream, addr)| {
         println!("New Connection: {}", addr);
         let (reader, writer) = stream.split();
         let (tx, rx) = futures::sync::mpsc::unbounded::<Vec<u8>>();
-        //connections.borrow_mut().insert(addr, tx);
+        // connections.borrow_mut().insert(addr, tx);
         main_context.borrow_mut().connections.insert(addr, tx);
         let main_context_inner = main_context.clone();
         let reader = BufReader::new(reader);
 
         let iter = stream::iter(iter::repeat(()).map(Ok::<(), Error>));
-        let socket_reader = iter.fold((reader, main_context_inner), move |(reader, main_context_inner), _|{
-            let header_buf: [u8;4] = [0;4];
+        let socket_reader = iter.fold((reader, main_context_inner),
+                                      move |(reader, main_context_inner), _| {
+            let header_buf: [u8; 4] = [0; 4];
             let header = io::read_exact(reader, header_buf);
             let body = header.and_then(|(reader, header)| {
                 let body_len: u32 = service::handler::get_u32_length(&header[..]);
@@ -95,7 +95,7 @@ fn main() {
                 io::read_exact(reader, buff)
             });
 
-            body.map(move |(reader, vec)|{
+            body.map(move |(reader, vec)| {
                 let event_id: u32 = service::handler::get_u32_length(&vec[0..4]);
                 {
                     let process_methods = main_context_inner.borrow_mut().methods.take().unwrap();
@@ -106,7 +106,7 @@ fn main() {
 
                     {
                         let method = process_methods.get(&event_id).unwrap();
-                        method(&mut service,tx,  addr, &vec[4..]);
+                        method(&mut service, tx, addr, &vec[4..]);
                     }
 
                     main_context_inner.borrow_mut().methods = Some(process_methods);
@@ -116,18 +116,18 @@ fn main() {
             })
         });
 
-        let socket_writer = rx.fold(writer, |writer, msg|{
+        let socket_writer = rx.fold(writer, |writer, msg| {
             let amt = io::write_all(writer, msg);
-            let amt = amt.map(|(writer, _)|writer);
-            amt.map_err(|_|())
+            let amt = amt.map(|(writer, _)| writer);
+            amt.map_err(|_| ())
         });
 
-        //let connections_in = connections.clone();
+        // let connections_in = connections.clone();
         let main_context_in = main_context.clone();
-        let socket_reader = socket_reader.map_err(|_|());
-        let connection = socket_reader.map(|_|()).select(socket_writer.map(|_|()));
+        let socket_reader = socket_reader.map_err(|_| ());
+        let connection = socket_reader.map(|_| ()).select(socket_writer.map(|_| ()));
         handle.spawn(connection.then(move |_| {
-            //connections_in.borrow_mut().remove(&addr);
+            // connections_in.borrow_mut().remove(&addr);
             main_context_in.borrow_mut().connections.remove(&addr);
             println!("Connection {} closed.", addr);
             Ok(())
@@ -138,39 +138,3 @@ fn main() {
 
     core.run(srv).unwrap();
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

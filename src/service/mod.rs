@@ -1,6 +1,7 @@
 extern crate futures;
 pub mod dio;
 pub mod handler;
+pub mod bizur;
 use std::net::SocketAddr;
 
 use std::sync::mpsc;
