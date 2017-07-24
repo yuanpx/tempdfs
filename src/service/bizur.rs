@@ -3,7 +3,7 @@ extern crate tokio_io;
 extern crate tokio_core;
 use std::collections::HashMap;
 use std::vec::Vec;
-use futures::Future;
+use futures::future::Future;
 
 use tokio_core::reactor::Handle;
 use tokio_core::net;
@@ -14,11 +14,15 @@ use tokio_io::AsyncRead;
 use futures::future::IntoFuture;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::time::{Duration, Instant};
+use tokio_core::reactor::Timeout;
+use std::ops::DerefMut;
 
 use super::handler;
 
 struct BizurConfig {
     addrs: Vec<String>,
+    timeout: u64,
 }
 
 
@@ -34,6 +38,7 @@ struct BizurSerive {
     config: Option<BizurConfig>,
     id: String,
     voted_count: u32,
+    heart_beat: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -166,14 +171,45 @@ fn send_endpoint_heartbeat(service: &mut BizurSerive, addr: &str) {
     
 }
 
-fn send_heart_beat(service: &mut BizurSerive) {
-    if service.is_leader {
-        let config = service.config.take().unwrap();
+fn start_send_heart_beat(service: Rc<RefCell<BizurSerive>>) {
+    if service.borrow().is_leader {
+        let config = service.borrow_mut().config.take().unwrap();
         for endpoint in &config.addrs {
-            send_endpoint_heartbeat(service, endpoint);
+            send_endpoint_heartbeat(service.borrow_mut().deref_mut(), endpoint);
         }
 
-        service.config = Some(config);
+        let dur = Duration::from_secs(config.timeout);
+        let heart_beat_timeout = Timeout::new(dur, &service.borrow_mut().net_handle).unwrap();
+        let service_inner = service.clone();
+        let heart_beat_timeout = heart_beat_timeout.and_then(move |_| {
+            start_send_heart_beat(service_inner);
+            Ok(())
+        });
+        let heart_beat_timeout = heart_beat_timeout.map_err(|_|());
+        service.borrow_mut().net_handle.spawn(heart_beat_timeout);
+
+        service.borrow_mut().config = Some(config);
+    }
+}
+
+fn start_check_heartbeat(service: &mut Rc<RefCell<BizurSerive>>) {
+    if !service.borrow_mut().is_leader {
+        if service.borrow_mut().heart_beat {
+            let config = service.borrow_mut().config.take().unwrap();
+            let dur = Duration::from_secs(config.timeout);
+            let heart_beat_timeout = Timeout::new(dur, &service.borrow_mut().net_handle).unwrap();
+            let mut service_inner = service.clone();
+            let heart_beat_timeout = heart_beat_timeout.and_then(move |_| {
+                start_check_heartbeat(&mut service_inner);
+                Ok(())
+            });
+            let heart_beat_timeout = heart_beat_timeout.map_err(|_|());
+            service.borrow_mut().net_handle.spawn(heart_beat_timeout);
+
+            service.borrow_mut().config = Some(config);
+        }
+    } else {
+        start_election(service);
     }
 }
 
