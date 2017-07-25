@@ -22,7 +22,8 @@ use super::handler;
 
 struct BizurConfig {
     addrs: Vec<String>,
-    timeout: u64,
+    heartbeat_timeout: u64,
+    req_timeout: u64,
 }
 
 
@@ -45,6 +46,15 @@ struct BizurSerive {
 struct VoteReq {
     elect_id: u64,
     addr: String,
+}
+
+impl VoteReq {
+    fn clone(&self) -> VoteReq {
+        VoteReq {
+            elect_id: self.elect_id,
+            addr: self.addr.clone(),
+        }
+    }
 }
 
 impl handler::Event for VoteReq {
@@ -86,16 +96,16 @@ fn start_election(service: &mut Rc<RefCell<BizurSerive>>) {
         let mut remotes = service.borrow_mut().remotes.clone();
         let con = remotes.get(con_addr).unwrap();
         let source = service.borrow().id.clone();
+        let service_inner = service.clone();
+        let vote_req = VoteReq{
+            elect_id: elect_id,
+            addr: source,
+        };
         let please_resp = {
             //let con_inner = con.try_clone().unwrap();
             let con_inner = con.try_clone().unwrap();
             let async_con = net::TcpStream::from_stream(con_inner, &service.borrow_mut().net_handle).unwrap();
             let (reader, writer) = async_con.split();
-            let vote_req = VoteReq{
-                elect_id: elect_id,
-                addr: source,
-            };
-
             let req_message = handler::gen_message(&vote_req);
             let req = io::write_all(writer , req_message);
             let resp=  req.and_then(move|(_, _)| {
@@ -110,17 +120,27 @@ fn start_election(service: &mut Rc<RefCell<BizurSerive>>) {
                 let resp =  io::read_exact(reader, resp_message);
                 resp.and_then(move|(_, resp_message)| {
                     // Ok(body)
-                    let vote_resp: VoteResp = handler::gen_obj(&resp_message);
-                    
-
-
+                    let mut vote_resp: VoteResp = handler::gen_obj(&resp_message);
+                    handle_vote_resp(service_inner.borrow_mut().deref_mut(), &mut vote_resp);
                     Ok(())
                 })
             });
             resp.map_err(|_|())
         }; 
 
-        service.borrow_mut().net_handle.spawn(please_resp);
+        let dur = Duration::from_secs(config.req_timeout);
+        let req_timeout = Timeout::new(dur, &service.borrow_mut().net_handle).unwrap();
+        let service_inner_timeout = service.clone();
+        let req_timeout = req_timeout.and_then(move |_| {
+            handle_req_vote_timeout(service_inner_timeout.borrow_mut().deref_mut(), &vote_req);
+            Ok(())
+        });
+
+        let req_timeout = req_timeout.map_err(|_| ());
+
+        let req_vote = please_resp.select(req_timeout).map(|_| ()).map_err(|_| ());
+
+        service.borrow_mut().net_handle.spawn(req_vote);
     }
     
     service.borrow_mut().config = Some(config);
@@ -167,6 +187,10 @@ fn handle_vote_resp(service: &mut BizurSerive, resp: &mut VoteResp) {
     }
 }
 
+fn handle_req_vote_timeout(service: &mut BizurSerive, vote_req: &VoteReq) {
+    
+}
+
 fn send_endpoint_heartbeat(service: &mut BizurSerive, addr: &str) {
     
 }
@@ -178,7 +202,7 @@ fn start_send_heart_beat(service: Rc<RefCell<BizurSerive>>) {
             send_endpoint_heartbeat(service.borrow_mut().deref_mut(), endpoint);
         }
 
-        let dur = Duration::from_secs(config.timeout);
+        let dur = Duration::from_secs(config.heartbeat_timeout);
         let heart_beat_timeout = Timeout::new(dur, &service.borrow_mut().net_handle).unwrap();
         let service_inner = service.clone();
         let heart_beat_timeout = heart_beat_timeout.and_then(move |_| {
@@ -196,7 +220,7 @@ fn start_check_heartbeat(service: &mut Rc<RefCell<BizurSerive>>) {
     if !service.borrow_mut().is_leader {
         if service.borrow_mut().heart_beat {
             let config = service.borrow_mut().config.take().unwrap();
-            let dur = Duration::from_secs(config.timeout);
+            let dur = Duration::from_secs(config.heartbeat_timeout);
             let heart_beat_timeout = Timeout::new(dur, &service.borrow_mut().net_handle).unwrap();
             let mut service_inner = service.clone();
             let heart_beat_timeout = heart_beat_timeout.and_then(move |_| {
