@@ -278,7 +278,6 @@ fn start_check_heartbeat(service: &mut Rc<RefCell<BizurSerive>>) {
             });
             let heart_beat_timeout = heart_beat_timeout.map_err(|_|());
             service.borrow_mut().event_handle.spawn(heart_beat_timeout);
-
             service.borrow_mut().config = Some(config);
         }
     } else {

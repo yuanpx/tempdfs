@@ -2,11 +2,10 @@ extern crate futures;
 use std::sync::mpsc;
 use std::collections::HashMap;
 use std::fs::File;
-use futures::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use futures::sync::mpsc::{ UnboundedSender};
 use std::io::prelude::*;
 type IdType = u32;
 
-use super::handler::Event;
 use super::handler;
 use tokio_core::reactor::Handle;
 use std::net::SocketAddr;
