@@ -17,31 +17,10 @@ use std::cell::RefCell;
 use std::time::{Duration, Instant};
 use tokio_core::reactor::Timeout;
 use std::ops::DerefMut;
+use std::net::SocketAddr;
+use super::handler::Event;
 
 use super::handler;
-
-struct BizurConfig {
-    addrs: Vec<String>,
-    heartbeat_timeout: u64,
-    req_timeout: u64,
-}
-
-
-struct BizurSerive {
-    elect_id: u64,
-    voted_id: u64,
-    vals: HashMap<String, String>,
-    net_handle: Handle,
-    remotes: Rc<HashMap<String, TcpStream>>,
-    node_count: u32,
-    is_leader: bool,
-    leader: Option<String>,
-    config: Option<BizurConfig>,
-    id: String,
-    voted_count: u32,
-    heart_beat: bool,
-}
-
 #[derive(Serialize, Deserialize)]
 struct VoteReq {
     elect_id: u64,
@@ -62,6 +41,76 @@ impl handler::Event for VoteReq {
         4
     }
 }
+
+struct BizurConfig {
+    addrs: Vec<String>,
+    heartbeat_timeout: u64,
+    req_timeout: u64,
+}
+
+
+struct BizurSerive {
+    elect_id: u64,
+    voted_id: u64,
+    vals: HashMap<String, String>,
+    event_handle: Handle,
+    remotes: Rc<HashMap<String, TcpStream>>,
+    in_connections: HashMap<SocketAddr, super::NioSender>,
+    node_count: u32,
+    is_leader: bool,
+    leader: Option<String>,
+    config: Option<BizurConfig>,
+    id: String,
+    voted_count: u32,
+    heart_beat: bool,
+}
+
+impl super::FrameWork for BizurSerive {
+    type LoopCmd = ();
+
+    fn new(loop_cmd_sender: futures::sync::mpsc::UnboundedSender<Self::LoopCmd>, loop_handle: Handle) -> Self {
+        BizurSerive {
+            elect_id: 0,
+            voted_id: 0,
+            vals: HashMap::new(),
+            event_handle: loop_handle,
+            remotes: Rc::new(HashMap::new()),
+            in_connections: HashMap::new(),
+            node_count: 3,
+            is_leader: false,
+            leader: Option::None,
+            config: Option::None,
+            id: "one".to_string(),
+            voted_count: 0,
+            heart_beat: false,
+        }
+    }
+
+    fn main_listen_addr(&self) -> &str {
+        "127.0.0.1:8099"
+    }
+
+    fn handle_connect(service: Rc<RefCell<Self>> ,addr: &SocketAddr,nio_sender: super::NioSender) {
+        service.borrow_mut().in_connections.insert(addr.clone(), nio_sender);
+    }
+
+    fn handle_close(service: Rc<RefCell<Self>>, addr: &SocketAddr) {
+        service.borrow_mut().in_connections.remove(addr);
+    }
+
+    fn handle_con_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, event_id: super::IdType, buf: &[u8]) {
+        if event_id == VoteReq::event_id() {
+            let mut vote_req: VoteReq = super::handler::gen_obj(buf);
+            handle_vote_req(service.borrow_mut().deref_mut(), &mut vote_req);
+        }
+        
+    }
+
+    fn handle_loop_event(service: Rc<RefCell<Self>>, cmd: Self::LoopCmd){
+        
+    }
+}
+
 
 #[derive(Serialize, Deserialize)]
 struct VoteResp {
@@ -104,7 +153,7 @@ fn start_election(service: &mut Rc<RefCell<BizurSerive>>) {
         let please_resp = {
             //let con_inner = con.try_clone().unwrap();
             let con_inner = con.try_clone().unwrap();
-            let async_con = net::TcpStream::from_stream(con_inner, &service.borrow_mut().net_handle).unwrap();
+            let async_con = net::TcpStream::from_stream(con_inner, &service.borrow_mut().event_handle).unwrap();
             let (reader, writer) = async_con.split();
             let req_message = handler::gen_message(&vote_req);
             let req = io::write_all(writer , req_message);
@@ -129,7 +178,7 @@ fn start_election(service: &mut Rc<RefCell<BizurSerive>>) {
         }; 
 
         let dur = Duration::from_secs(config.req_timeout);
-        let req_timeout = Timeout::new(dur, &service.borrow_mut().net_handle).unwrap();
+        let req_timeout = Timeout::new(dur, &service.borrow_mut().event_handle).unwrap();
         let service_inner_timeout = service.clone();
         let req_timeout = req_timeout.and_then(move |_| {
             handle_req_vote_timeout(service_inner_timeout.borrow_mut().deref_mut(), &vote_req);
@@ -140,7 +189,7 @@ fn start_election(service: &mut Rc<RefCell<BizurSerive>>) {
 
         let req_vote = please_resp.select(req_timeout).map(|_| ()).map_err(|_| ());
 
-        service.borrow_mut().net_handle.spawn(req_vote);
+        service.borrow_mut().event_handle.spawn(req_vote);
     }
     
     service.borrow_mut().config = Some(config);
@@ -203,14 +252,14 @@ fn start_send_heart_beat(service: Rc<RefCell<BizurSerive>>) {
         }
 
         let dur = Duration::from_secs(config.heartbeat_timeout);
-        let heart_beat_timeout = Timeout::new(dur, &service.borrow_mut().net_handle).unwrap();
+        let heart_beat_timeout = Timeout::new(dur, &service.borrow_mut().event_handle).unwrap();
         let service_inner = service.clone();
         let heart_beat_timeout = heart_beat_timeout.and_then(move |_| {
             start_send_heart_beat(service_inner);
             Ok(())
         });
         let heart_beat_timeout = heart_beat_timeout.map_err(|_|());
-        service.borrow_mut().net_handle.spawn(heart_beat_timeout);
+        service.borrow_mut().event_handle.spawn(heart_beat_timeout);
 
         service.borrow_mut().config = Some(config);
     }
@@ -221,14 +270,14 @@ fn start_check_heartbeat(service: &mut Rc<RefCell<BizurSerive>>) {
         if service.borrow_mut().heart_beat {
             let config = service.borrow_mut().config.take().unwrap();
             let dur = Duration::from_secs(config.heartbeat_timeout);
-            let heart_beat_timeout = Timeout::new(dur, &service.borrow_mut().net_handle).unwrap();
+            let heart_beat_timeout = Timeout::new(dur, &service.borrow_mut().event_handle).unwrap();
             let mut service_inner = service.clone();
             let heart_beat_timeout = heart_beat_timeout.and_then(move |_| {
                 start_check_heartbeat(&mut service_inner);
                 Ok(())
             });
             let heart_beat_timeout = heart_beat_timeout.map_err(|_|());
-            service.borrow_mut().net_handle.spawn(heart_beat_timeout);
+            service.borrow_mut().event_handle.spawn(heart_beat_timeout);
 
             service.borrow_mut().config = Some(config);
         }

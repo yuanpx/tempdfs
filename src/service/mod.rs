@@ -21,7 +21,6 @@ use tokio_core::reactor::Core;
 use tokio_core::reactor::Handle;
 use tokio_io::io;
 use tokio_io::AsyncRead;
-use std::sync::mpsc;
 use std::net::SocketAddr;
 
 
@@ -122,9 +121,7 @@ pub fn start_framework<T: 'static + FrameWork>() {
     let loop_cmd_handler = loop_cmd_handler.map_err(|_| ());
 
     loop_cmd_handle.spawn(loop_cmd_handler);
-
     core.run(srv).unwrap();
-
 }
 
 
