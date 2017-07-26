@@ -12,13 +12,15 @@ extern crate futures;
 extern crate tokio_core;
 extern crate tokio_io;
 
+use std::env;
+
 
 mod service;
 
 
 fn main() {
     println!("Hello, world!");
-    let conf = "/home/yuanpeixuan/workspace/tempdfs/bizur.toml";
+    let conf = env::args().nth(1).unwrap_or("/home/yuanpeixuan/workspace/tempdfs/bizur.toml".to_string());
     
-    service::start_framework::<service::bizur::BizurService>(conf);
+    service::start_framework::<service::bizur::BizurService>(&conf);
 }
