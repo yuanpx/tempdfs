@@ -130,7 +130,11 @@ impl super::FrameWork for BizurService {
         match cmd {
             BizurCmd::HttpReqLeader(sender) => {
                 let leader_string = "leader is ".to_string() + &service.borrow().leader;
-                sender.send(leader_string);
+                sender.send(leader_string).unwrap();
+            },
+            BizurCmd::StartChecker => {
+                println!("start_heartbeat!");
+                start_check_heartbeat(&service);
             },
             _ => {},
         };
@@ -161,6 +165,48 @@ fn get_major_count(service: &BizurService) -> u32 {
     return service.node_count/2 + 1;
 }
 
+fn req_vote_action(service: &Rc<RefCell<BizurService>>, con: TcpStream, vote_req: VoteReq, req_timeout: u64) {
+
+    let service_inner = service.clone();
+    let please_resp = {
+        //let con_inner = con.try_clone().unwrap();
+        let async_con = net::TcpStream::from_stream(con, &service.borrow_mut().event_handle).unwrap();
+        let (reader, writer) = async_con.split();
+        let req_message = handler::gen_message(&vote_req);
+        let req = io::write_all(writer , req_message);
+        let resp=  req.and_then(move|(_, _)| {
+            let reader = BufReader::new(reader);
+            let vote_resp = VoteResp {
+                elect_id: 0,
+                ack: 0,
+            };
+            let resp_message = handler::gen_message(&vote_resp);
+            let resp =  io::read_exact(reader, resp_message);
+            resp.and_then(move|(_, resp_message)| {
+                // Ok(body)
+                let mut vote_resp: VoteResp = handler::gen_obj(&resp_message);
+                handle_vote_resp(service_inner.borrow_mut().deref_mut(), &mut vote_resp);
+                Ok(())
+            })
+        });
+        resp.map_err(|_|())
+    }; 
+
+    let dur = Duration::from_secs(req_timeout);
+    let req_timeout = Timeout::new(dur, &service.borrow_mut().event_handle).unwrap();
+    let service_inner_timeout = service.clone();
+    let req_timeout = req_timeout.and_then(move |_| {
+        handle_req_vote_timeout(service_inner_timeout.borrow_mut().deref_mut(), &vote_req);
+        Ok(())
+    });
+
+    let req_timeout = req_timeout.map_err(|_| ());
+
+    let req_vote = please_resp.select(req_timeout).map(|_| ()).map_err(|_| ());
+
+    service.borrow_mut().event_handle.spawn(req_vote);
+}
+
 fn start_election(service: &Rc<RefCell<BizurService>>) {
     service.borrow_mut().elect_id += 1;
     service.borrow_mut().voted_count = 0;
@@ -177,49 +223,12 @@ fn start_election(service: &Rc<RefCell<BizurService>>) {
         let remotes = service.borrow_mut().remotes.clone();
         let con = remotes.get(con_addr).unwrap();
         let source = config.host.clone();
-        let service_inner = service.clone();
         let vote_req = VoteReq{
             elect_id: elect_id,
             addr: source,
         };
-        let please_resp = {
-            //let con_inner = con.try_clone().unwrap();
-            let con_inner = con.try_clone().unwrap();
-            let async_con = net::TcpStream::from_stream(con_inner, &service.borrow_mut().event_handle).unwrap();
-            let (reader, writer) = async_con.split();
-            let req_message = handler::gen_message(&vote_req);
-            let req = io::write_all(writer , req_message);
-            let resp=  req.and_then(move|(_, _)| {
-                let reader = BufReader::new(reader);
-                let vote_resp = VoteResp {
-                    elect_id: 0,
-                    ack: 0,
-                };
-                let resp_message = handler::gen_message(&vote_resp);
-                let resp =  io::read_exact(reader, resp_message);
-                resp.and_then(move|(_, resp_message)| {
-                    // Ok(body)
-                    let mut vote_resp: VoteResp = handler::gen_obj(&resp_message);
-                    handle_vote_resp(service_inner.borrow_mut().deref_mut(), &mut vote_resp);
-                    Ok(())
-                })
-            });
-            resp.map_err(|_|())
-        }; 
 
-        let dur = Duration::from_secs(config.req_timeout);
-        let req_timeout = Timeout::new(dur, &service.borrow_mut().event_handle).unwrap();
-        let service_inner_timeout = service.clone();
-        let req_timeout = req_timeout.and_then(move |_| {
-            handle_req_vote_timeout(service_inner_timeout.borrow_mut().deref_mut(), &vote_req);
-            Ok(())
-        });
 
-        let req_timeout = req_timeout.map_err(|_| ());
-
-        let req_vote = please_resp.select(req_timeout).map(|_| ()).map_err(|_| ());
-
-        service.borrow_mut().event_handle.spawn(req_vote);
     }
     
 }
@@ -298,7 +307,6 @@ fn start_send_heart_beat(service: Rc<RefCell<BizurService>>) {
 }
 
 fn start_check_heartbeat(service: &Rc<RefCell<BizurService>>) {
-
     match service.borrow().status {
         LeaderStatus::HeartBeat => {
             service.borrow_mut().status = LeaderStatus::NoHeartbeat;
