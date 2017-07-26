@@ -22,6 +22,8 @@ use std::net::SocketAddr;
 use super::handler::Event;
 use super::bizur_conf;
 
+use std::sync::mpsc::Sender;
+
 use super::handler;
 #[derive(Serialize, Deserialize)]
 struct VoteReq {
@@ -44,8 +46,15 @@ impl handler::Event for VoteReq {
     }
 }
 
-enum BizurCmd {
+pub enum BizurCmd {
     StartChecker,
+    HttpReqLeader(Sender<String>),
+}
+
+enum LeaderStatus {
+    Leader,
+    NoHeartbeat,
+    HeartBeat,
 }
 
 
@@ -57,7 +66,7 @@ struct BizurSerive {
     remotes: Rc<HashMap<String, TcpStream>>,
     in_connections: HashMap<SocketAddr, super::NioSender>,
     node_count: u32,
-    is_leader: bool,
+    status: LeaderStatus,
     leader: String,
     config: bizur_conf::BizurConfig,
     voted_count: u32,
@@ -72,9 +81,6 @@ impl super::FrameWork for BizurSerive {
         let content = bizur_conf::load_config("bizur.conf").unwrap();
         let config: bizur_conf::BizurConfig = toml::from_str(&content).unwrap();
 
-        let listen_addr = config.listen_addr.clone();
-
-
         BizurSerive {
             elect_id: 0,
             voted_id: 0,
@@ -83,7 +89,7 @@ impl super::FrameWork for BizurSerive {
             remotes: Rc::new(HashMap::new()),
             in_connections: HashMap::new(),
             node_count: 3,
-            is_leader: false,
+            status: LeaderStatus::NoHeartbeat,
             leader: "".to_string(),
             config: config,
             voted_count: 0,
@@ -140,15 +146,20 @@ fn get_major_count(service: &BizurSerive) -> u32 {
     return service.node_count/2 + 1;
 }
 
-fn start_election(service: &mut Rc<RefCell<BizurSerive>>) {
+fn start_election(service: &Rc<RefCell<BizurSerive>>) {
     service.borrow_mut().elect_id += 1;
     service.borrow_mut().voted_count = 0;
-    service.borrow_mut().is_leader = false;
+    service.borrow_mut().status = LeaderStatus::NoHeartbeat;
     let elect_id = service.borrow().elect_id;
     let config = &service.borrow_mut().config;
 
     for con_addr in &config.addrs {
-        let mut remotes = service.borrow_mut().remotes.clone();
+        if con_addr == &service.borrow().config.host {
+            service.borrow_mut().voted_count = 1;
+            continue;
+        }
+
+        let remotes = service.borrow_mut().remotes.clone();
         let con = remotes.get(con_addr).unwrap();
         let source = config.host.clone();
         let service_inner = service.clone();
@@ -169,9 +180,7 @@ fn start_election(service: &mut Rc<RefCell<BizurSerive>>) {
                     elect_id: 0,
                     ack: 0,
                 };
-
                 let resp_message = handler::gen_message(&vote_resp);
-
                 let resp =  io::read_exact(reader, resp_message);
                 resp.and_then(move|(_, resp_message)| {
                     // Ok(body)
@@ -235,7 +244,7 @@ fn handle_vote_resp(service: &mut BizurSerive, resp: &mut VoteResp) {
         if resp.ack == 1 {
             service.voted_count += 1;
             if service.voted_count > get_major_count(service) {
-                service.is_leader = true;
+                service.status = LeaderStatus::Leader;
             }
         }
     }
@@ -250,48 +259,50 @@ fn send_endpoint_heartbeat(service: &mut BizurSerive, addr: &str) {
 }
 
 fn start_send_heart_beat(service: Rc<RefCell<BizurSerive>>) {
-    if service.borrow().is_leader {
-        let config = &service.borrow_mut().config;
-        for endpoint in &config.addrs {
-            send_endpoint_heartbeat(service.borrow_mut().deref_mut(), endpoint);
-        }
-
-        let dur = Duration::from_secs(config.heartbeat_timeout);
-        let heart_beat_timeout = Timeout::new(dur, &service.borrow_mut().event_handle).unwrap();
-        let service_inner = service.clone();
-        let heart_beat_timeout = heart_beat_timeout.and_then(move |_| {
-            start_send_heart_beat(service_inner);
-            Ok(())
-        });
-        let heart_beat_timeout = heart_beat_timeout.map_err(|_|());
-        service.borrow_mut().event_handle.spawn(heart_beat_timeout);
-
-    }
-}
-
-fn start_check_heartbeat(service: &mut Rc<RefCell<BizurSerive>>) {
-    if !service.borrow_mut().is_leader {
-        if service.borrow_mut().heart_beat {
+    match service.borrow().status {
+        LeaderStatus::Leader =>  {
             let config = &service.borrow_mut().config;
+            for endpoint in &config.addrs {
+                send_endpoint_heartbeat(service.borrow_mut().deref_mut(), endpoint);
+            }
+
             let dur = Duration::from_secs(config.heartbeat_timeout);
             let heart_beat_timeout = Timeout::new(dur, &service.borrow_mut().event_handle).unwrap();
-            let mut service_inner = service.clone();
+            let service_inner = service.clone();
             let heart_beat_timeout = heart_beat_timeout.and_then(move |_| {
-                start_check_heartbeat(&mut service_inner);
+                start_send_heart_beat(service_inner);
                 Ok(())
             });
             let heart_beat_timeout = heart_beat_timeout.map_err(|_|());
             service.borrow_mut().event_handle.spawn(heart_beat_timeout);
+        },
+        _ => {
+            println!("no need to send heartbeat");
         }
-    } else {
-        start_election(service);
     }
 }
 
+fn start_check_heartbeat(service: &Rc<RefCell<BizurSerive>>) {
 
-
-
-
-
-
-
+    match service.borrow().status {
+        LeaderStatus::HeartBeat => {
+            service.borrow_mut().status = LeaderStatus::NoHeartbeat;
+        },
+        LeaderStatus::NoHeartbeat => {
+            start_election(&service);
+        },
+        _ => {
+            println!("be the leader, no need to check heartbeat");
+        }
+    };
+    let config = &service.borrow_mut().config;
+    let dur = Duration::from_secs(config.heartbeat_timeout);
+    let heart_beat_timeout = Timeout::new(dur, &service.borrow_mut().event_handle).unwrap();
+    let mut service_inner = service.clone();
+    let heart_beat_timeout = heart_beat_timeout.and_then(move |_| {
+        start_check_heartbeat(&mut service_inner);
+        Ok(())
+    });
+    let heart_beat_timeout = heart_beat_timeout.map_err(|_|());
+    service.borrow_mut().event_handle.spawn(heart_beat_timeout);
+}

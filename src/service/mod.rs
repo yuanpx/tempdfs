@@ -2,11 +2,13 @@ pub mod dio;
 pub mod handler;
 pub mod bizur;
 pub mod bizur_conf;
+pub mod http;
 pub type NioSender = futures::sync::mpsc::UnboundedSender<Vec<u8>>;
 pub type IdType = u32;
 extern crate futures;
 extern crate tokio_core;
 extern crate tokio_io;
+
 
 use std::collections::HashMap;
 use std::rc::Rc;
