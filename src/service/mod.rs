@@ -35,7 +35,7 @@ pub trait FrameWork {
 //    type LoopCmdReceiver;
 
     //fn new(loop_cmd_sender: Self::LoopCmdSender) -> Self;
-    fn new(loop_cmd_sender: futures::sync::mpsc::UnboundedSender<Self::LoopCmd>, loop_handle: Handle) -> Self;
+    fn new(path: &str, loop_cmd_sender: futures::sync::mpsc::UnboundedSender<Self::LoopCmd>, loop_handle: Handle) -> Self;
 
     fn main_listen_addr(&self) -> &str;
 
@@ -48,14 +48,14 @@ pub trait FrameWork {
     fn handle_loop_event(service: Rc<RefCell<Self>>, cmd: Self::LoopCmd);
 }
 
-pub fn start_framework<T: 'static + FrameWork>() {
+pub fn start_framework<T: 'static + FrameWork>(path: &str) {
     
     let (loop_cmd_tx, loop_cmd_rx) = futures::sync::mpsc::unbounded::<T::LoopCmd>();
     let mut core = Core::new().unwrap();
     let handle = core.handle();
     let loop_cmd_handle = handle.clone();
     let loop_handler = handle.clone();
-    let service = T::new(loop_cmd_tx, loop_handler);
+    let service = T::new(path, loop_cmd_tx, loop_handler);
     let service = Rc::new(RefCell::new(service));
     let service_loop_handler = service.clone();
     let addr = service.borrow().main_listen_addr().to_string();

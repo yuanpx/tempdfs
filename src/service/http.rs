@@ -66,11 +66,10 @@ impl Service for Dashboard {
                 .with_header(ContentType::plaintext())
                 .with_body(msg))
     }
-
 }
 
 
-fn start_dashboard(req_sender: futures::sync::mpsc::UnboundedSender<BizurCmd>) {
+pub fn start_dashboard(req_sender: futures::sync::mpsc::UnboundedSender<BizurCmd>) {
     let addr = "127.0.0.1:3000".parse().unwrap();
     let messager = Arc::new(Mutex::new(Messager::new(req_sender)));
     let server = Http::new().bind(&addr, move||
@@ -81,5 +80,7 @@ fn start_dashboard(req_sender: futures::sync::mpsc::UnboundedSender<BizurCmd>) {
 
     ).unwrap();
 
+    println!("http listen on 127.0.0.1:3000");
     server.run().unwrap();
+    println!("http end!");
 }

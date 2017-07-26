@@ -97,7 +97,7 @@ pub struct DioService {
 impl super::FrameWork for DioService {
     type LoopCmd = ();
 
-    fn new (loop_cmd_sender: futures::sync::mpsc::UnboundedSender<Self::LoopCmd>, loop_handle: Handle) -> Self {
+    fn new (path: &str, loop_cmd_sender: futures::sync::mpsc::UnboundedSender<Self::LoopCmd>, loop_handle: Handle) -> Self {
         
         let (dtx, drx) = mpsc::channel();
         DioService {

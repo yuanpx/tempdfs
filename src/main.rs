@@ -18,6 +18,7 @@ mod service;
 
 fn main() {
     println!("Hello, world!");
-
-    service::start_framework::<service::dio::DioService>();
+    let conf = "/home/yuanpeixuan/workspace/tempdfs/bizur.toml";
+    
+    service::start_framework::<service::bizur::BizurService>(conf);
 }

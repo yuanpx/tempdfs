@@ -21,6 +21,9 @@ use std::ops::DerefMut;
 use std::net::SocketAddr;
 use super::handler::Event;
 use super::bizur_conf;
+use std::thread;
+use super::http;
+
 
 use std::sync::mpsc::Sender;
 
@@ -58,7 +61,7 @@ enum LeaderStatus {
 }
 
 
-struct BizurSerive {
+pub struct BizurService {
     elect_id: u64,
     voted_id: u64,
     vals: HashMap<String, String>,
@@ -74,14 +77,19 @@ struct BizurSerive {
     cmd_sender: futures::sync::mpsc::UnboundedSender<BizurCmd>,
 }
 
-impl super::FrameWork for BizurSerive {
+impl super::FrameWork for BizurService {
     type LoopCmd = BizurCmd;
 
-    fn new(loop_cmd_sender: futures::sync::mpsc::UnboundedSender<Self::LoopCmd>, loop_handle: Handle) -> Self {
-        let content = bizur_conf::load_config("bizur.conf").unwrap();
+    fn new(path: &str, loop_cmd_sender: futures::sync::mpsc::UnboundedSender<Self::LoopCmd>, loop_handle: Handle) -> Self {
+        let content = bizur_conf::load_config("/home/yuanpeixuan/workspace/tempdfs/bizur.toml").unwrap();
         let config: bizur_conf::BizurConfig = toml::from_str(&content).unwrap();
 
-        BizurSerive {
+        let http_cmd_sender = loop_cmd_sender.clone();
+        thread::spawn(|| {
+            http::start_dashboard(http_cmd_sender);
+        });
+
+        BizurService {
             elect_id: 0,
             voted_id: 0,
             vals: HashMap::new(),
@@ -119,6 +127,13 @@ impl super::FrameWork for BizurSerive {
     }
 
     fn handle_loop_event(service: Rc<RefCell<Self>>, cmd: Self::LoopCmd){
+        match cmd {
+            BizurCmd::HttpReqLeader(sender) => {
+                let leader_string = "leader is ".to_string() + &service.borrow().leader;
+                sender.send(leader_string);
+            },
+            _ => {},
+        };
         
     }
 }
@@ -142,11 +157,11 @@ struct HeartBeat {
 }
 
 
-fn get_major_count(service: &BizurSerive) -> u32 {
+fn get_major_count(service: &BizurService) -> u32 {
     return service.node_count/2 + 1;
 }
 
-fn start_election(service: &Rc<RefCell<BizurSerive>>) {
+fn start_election(service: &Rc<RefCell<BizurService>>) {
     service.borrow_mut().elect_id += 1;
     service.borrow_mut().voted_count = 0;
     service.borrow_mut().status = LeaderStatus::NoHeartbeat;
@@ -210,11 +225,11 @@ fn start_election(service: &Rc<RefCell<BizurSerive>>) {
 }
 
 
-fn send_vote_resp(service: &mut BizurSerive, resp: &VoteResp) {
+fn send_vote_resp(service: &mut BizurService, resp: &VoteResp) {
     
 }
 
-fn handle_vote_req(service: &mut BizurSerive, req: &mut VoteReq) {
+fn handle_vote_req(service: &mut BizurService, req: &mut VoteReq) {
     if req.elect_id > service.voted_id {
         service.voted_id = req.elect_id;
         service.leader = req.addr.clone();
@@ -239,7 +254,7 @@ fn handle_vote_req(service: &mut BizurSerive, req: &mut VoteReq) {
     }
 }
 
-fn handle_vote_resp(service: &mut BizurSerive, resp: &mut VoteResp) {
+fn handle_vote_resp(service: &mut BizurService, resp: &mut VoteResp) {
     if resp.elect_id == service.elect_id {
         if resp.ack == 1 {
             service.voted_count += 1;
@@ -250,15 +265,15 @@ fn handle_vote_resp(service: &mut BizurSerive, resp: &mut VoteResp) {
     }
 }
 
-fn handle_req_vote_timeout(service: &mut BizurSerive, vote_req: &VoteReq) {
+fn handle_req_vote_timeout(service: &mut BizurService, vote_req: &VoteReq) {
     
 }
 
-fn send_endpoint_heartbeat(service: &mut BizurSerive, addr: &str) {
+fn send_endpoint_heartbeat(service: &mut BizurService, addr: &str) {
     
 }
 
-fn start_send_heart_beat(service: Rc<RefCell<BizurSerive>>) {
+fn start_send_heart_beat(service: Rc<RefCell<BizurService>>) {
     match service.borrow().status {
         LeaderStatus::Leader =>  {
             let config = &service.borrow_mut().config;
@@ -282,7 +297,7 @@ fn start_send_heart_beat(service: Rc<RefCell<BizurSerive>>) {
     }
 }
 
-fn start_check_heartbeat(service: &Rc<RefCell<BizurSerive>>) {
+fn start_check_heartbeat(service: &Rc<RefCell<BizurService>>) {
 
     match service.borrow().status {
         LeaderStatus::HeartBeat => {
