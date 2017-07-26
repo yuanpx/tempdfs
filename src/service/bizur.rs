@@ -1,6 +1,7 @@
 extern crate futures;
 extern crate tokio_io;
 extern crate tokio_core;
+extern crate toml;
 use std::collections::HashMap;
 use std::vec::Vec;
 use futures::future::Future;
@@ -19,6 +20,7 @@ use tokio_core::reactor::Timeout;
 use std::ops::DerefMut;
 use std::net::SocketAddr;
 use super::handler::Event;
+use super::bizur_conf;
 
 use super::handler;
 #[derive(Serialize, Deserialize)]
@@ -42,10 +44,8 @@ impl handler::Event for VoteReq {
     }
 }
 
-struct BizurConfig {
-    addrs: Vec<String>,
-    heartbeat_timeout: u64,
-    req_timeout: u64,
+enum BizurCmd {
+    StartChecker,
 }
 
 
@@ -59,16 +59,21 @@ struct BizurSerive {
     node_count: u32,
     is_leader: bool,
     leader: Option<String>,
-    config: Option<BizurConfig>,
+    config: Option<bizur_conf::BizurConfig>,
     id: String,
     voted_count: u32,
     heart_beat: bool,
+    cmd_sender: futures::sync::mpsc::UnboundedSender<BizurCmd>,
 }
 
 impl super::FrameWork for BizurSerive {
-    type LoopCmd = ();
+    type LoopCmd = BizurCmd;
 
     fn new(loop_cmd_sender: futures::sync::mpsc::UnboundedSender<Self::LoopCmd>, loop_handle: Handle) -> Self {
+        let content = bizur_conf::load_config("bizur.conf").unwrap();
+        let config: bizur_conf::BizurConfig = toml::from_str(&content).unwrap();
+
+
         BizurSerive {
             elect_id: 0,
             voted_id: 0,
@@ -79,10 +84,11 @@ impl super::FrameWork for BizurSerive {
             node_count: 3,
             is_leader: false,
             leader: Option::None,
-            config: Option::None,
+            config: Option::Some(config),
             id: "one".to_string(),
             voted_count: 0,
             heart_beat: false,
+            cmd_sender: loop_cmd_sender,
         }
     }
 
