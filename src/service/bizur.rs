@@ -58,9 +58,8 @@ struct BizurSerive {
     in_connections: HashMap<SocketAddr, super::NioSender>,
     node_count: u32,
     is_leader: bool,
-    leader: Option<String>,
-    config: Option<bizur_conf::BizurConfig>,
-    id: String,
+    leader: String,
+    config: bizur_conf::BizurConfig,
     voted_count: u32,
     heart_beat: bool,
     cmd_sender: futures::sync::mpsc::UnboundedSender<BizurCmd>,
@@ -73,6 +72,8 @@ impl super::FrameWork for BizurSerive {
         let content = bizur_conf::load_config("bizur.conf").unwrap();
         let config: bizur_conf::BizurConfig = toml::from_str(&content).unwrap();
 
+        let listen_addr = config.listen_addr.clone();
+
 
         BizurSerive {
             elect_id: 0,
@@ -83,9 +84,8 @@ impl super::FrameWork for BizurSerive {
             in_connections: HashMap::new(),
             node_count: 3,
             is_leader: false,
-            leader: Option::None,
-            config: Option::Some(config),
-            id: "one".to_string(),
+            leader: "".to_string(),
+            config: config,
             voted_count: 0,
             heart_beat: false,
             cmd_sender: loop_cmd_sender,
@@ -93,7 +93,7 @@ impl super::FrameWork for BizurSerive {
     }
 
     fn main_listen_addr(&self) -> &str {
-        "127.0.0.1:8099"
+        return &self.config.listen_addr;
     }
 
     fn handle_connect(service: Rc<RefCell<Self>> ,addr: &SocketAddr,nio_sender: super::NioSender) {
@@ -145,12 +145,12 @@ fn start_election(service: &mut Rc<RefCell<BizurSerive>>) {
     service.borrow_mut().voted_count = 0;
     service.borrow_mut().is_leader = false;
     let elect_id = service.borrow().elect_id;
-    let config = service.borrow_mut().config.take().unwrap();
+    let config = &service.borrow_mut().config;
 
     for con_addr in &config.addrs {
         let mut remotes = service.borrow_mut().remotes.clone();
         let con = remotes.get(con_addr).unwrap();
-        let source = service.borrow().id.clone();
+        let source = config.host.clone();
         let service_inner = service.clone();
         let vote_req = VoteReq{
             elect_id: elect_id,
@@ -198,7 +198,6 @@ fn start_election(service: &mut Rc<RefCell<BizurSerive>>) {
         service.borrow_mut().event_handle.spawn(req_vote);
     }
     
-    service.borrow_mut().config = Some(config);
 }
 
 
@@ -209,13 +208,13 @@ fn send_vote_resp(service: &mut BizurSerive, resp: &VoteResp) {
 fn handle_vote_req(service: &mut BizurSerive, req: &mut VoteReq) {
     if req.elect_id > service.voted_id {
         service.voted_id = req.elect_id;
-        service.leader = Some(req.addr.clone());
+        service.leader = req.addr.clone();
         let resp = VoteResp  {
             elect_id: req.elect_id,
             ack: 1, 
         };
         send_vote_resp(service, &resp);
-    } else if req.elect_id == service.voted_id && service.leader.as_ref().unwrap() == &req.addr{
+    } else if req.elect_id == service.voted_id && service.leader == req.addr{
         let resp = VoteResp  {
             elect_id: req.elect_id,
             ack: 1, 
@@ -252,7 +251,7 @@ fn send_endpoint_heartbeat(service: &mut BizurSerive, addr: &str) {
 
 fn start_send_heart_beat(service: Rc<RefCell<BizurSerive>>) {
     if service.borrow().is_leader {
-        let config = service.borrow_mut().config.take().unwrap();
+        let config = &service.borrow_mut().config;
         for endpoint in &config.addrs {
             send_endpoint_heartbeat(service.borrow_mut().deref_mut(), endpoint);
         }
@@ -267,14 +266,13 @@ fn start_send_heart_beat(service: Rc<RefCell<BizurSerive>>) {
         let heart_beat_timeout = heart_beat_timeout.map_err(|_|());
         service.borrow_mut().event_handle.spawn(heart_beat_timeout);
 
-        service.borrow_mut().config = Some(config);
     }
 }
 
 fn start_check_heartbeat(service: &mut Rc<RefCell<BizurSerive>>) {
     if !service.borrow_mut().is_leader {
         if service.borrow_mut().heart_beat {
-            let config = service.borrow_mut().config.take().unwrap();
+            let config = &service.borrow_mut().config;
             let dur = Duration::from_secs(config.heartbeat_timeout);
             let heart_beat_timeout = Timeout::new(dur, &service.borrow_mut().event_handle).unwrap();
             let mut service_inner = service.clone();
@@ -284,7 +282,6 @@ fn start_check_heartbeat(service: &mut Rc<RefCell<BizurSerive>>) {
             });
             let heart_beat_timeout = heart_beat_timeout.map_err(|_|());
             service.borrow_mut().event_handle.spawn(heart_beat_timeout);
-            service.borrow_mut().config = Some(config);
         }
     } else {
         start_election(service);

@@ -12,19 +12,10 @@ pub struct BizurConfig {
     pub addrs: Vec<String>,
     pub heartbeat_timeout: u64,
     pub req_timeout: u64,
+    pub host: String,
+    pub listen_addr: String,
 }
 
-impl Clone for BizurConfig {
-    fn clone(&self) -> Self {
-        BizurConfig {
-            addrs: self.addrs.clone(),
-            heartbeat_timeout: self.heartbeat_timeout.clone(),
-            req_timeout: self.req_timeout.clone(),
-        }
-        
-    }
-    
-}
 
 
 pub fn load_config(path: &str) -> Result<String> {
