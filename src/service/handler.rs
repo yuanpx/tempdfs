@@ -53,8 +53,8 @@ pub fn gen_message<T>(t: &T) -> Vec<u8>
     buf
 }
 
-pub fn gen_obj<'a, T>(buf: &[u8]) -> T
-    where T: Deserialize<'a> {
+pub fn gen_obj<T>(buf: &[u8]) -> T
+    where T: serde::de::DeserializeOwned {
 
     let cur = Cursor::new(buf);
     let mut de = Deserializer::new(cur);

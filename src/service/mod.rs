@@ -62,11 +62,11 @@ pub fn start_framework<T: 'static + FrameWork>(path: &str) {
     let addr = addr.parse().unwrap();
 
     let socket = TcpListener::bind(&addr, &handle).unwrap();
-    println!("Listening on: {}", addr);
+    info!("Listening on: {}", addr);
 
     // let connections = Rc::new(RefCell::new(HashMap::new()));
     let srv = socket.incoming().for_each(move |(stream, addr)| {
-        println!("New Connection: {}", addr);
+        info!("New Connection: {}", addr);
         let (reader, writer) = stream.split();
         let (tx, rx) = futures::sync::mpsc::unbounded::<Vec<u8>>();
         // connections.borrow_mut().insert(addr, tx);
@@ -107,7 +107,7 @@ pub fn start_framework<T: 'static + FrameWork>(path: &str) {
         handle.spawn(connection.then(move |_| {
             // connections_in.borrow_mut().remove(&addr);
             T::handle_close(service_in, &addr);
-            println!("Connection {} closed.", addr);
+            info!("Connection {} closed.", addr);
             Ok(())
         }));
 

@@ -80,7 +80,7 @@ pub fn start_dashboard(req_sender: futures::sync::mpsc::UnboundedSender<BizurCmd
 
     ).unwrap();
 
-    println!("http listen on 127.0.0.1:3000");
+    info!("http listen on 127.0.0.1:3000");
     server.run().unwrap();
-    println!("http end!");
+    info!("http end!");
 }
