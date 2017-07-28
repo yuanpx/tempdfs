@@ -25,6 +25,7 @@ use super::bizur_conf;
 use std::thread;
 use super::http;
 use std::os::unix::io::{AsRawFd, FromRawFd};
+use std::collections::LinkedList;
 
 
 use std::sync::mpsc::Sender;
@@ -61,6 +62,11 @@ enum LeaderStatus {
     HeartBeat,
 }
 
+enum CallMethod {
+    Sync((Vec<u8>, HANDLE_RPC_RESP)),
+    Async(Vec<u8>),
+}
+
 
 pub struct BizurService {
     elect_id: u64,
@@ -69,6 +75,7 @@ pub struct BizurService {
     event_handle: Handle,
     remotes: HashMap<String, TcpStream>,
     in_connections: HashMap<SocketAddr, super::NioSender>,
+    reply_handlers: LinkedList<CallMethod>,
     node_count: u32,
     status: LeaderStatus,
     leader: String,
@@ -97,6 +104,7 @@ impl super::FrameWork for BizurService {
             event_handle: loop_handle,
             remotes: HashMap::new(),
             in_connections: HashMap::new(),
+            reply_handlers: LinkedList::new(),
             node_count: 3,
             status: LeaderStatus::NoHeartbeat,
             leader: "".to_string(),
@@ -172,94 +180,46 @@ fn get_major_count(service: &BizurService) -> u32 {
     return service.node_count/2 + 1;
 }
 
-type HANDLE_RPC_RESP<T> = fn(service: Rc<RefCell<BizurService>>, resp: Result<T, ()>);
+trait RpcHandler: Sized + serde::de::DeserializeOwned + handler::Event {
+    fn handle(service: Rc<RefCell<BizurService>>, resp: Result<Self, ()>);
+        
+}
+type HANDLE_RPC_RESP = fn(service: Rc<RefCell<BizurService>>, resp: Result<&[u8], ()>);
 
-//fn sync_call<REQ, RESP>(service: &Rc<RefCell<BizurService>>, addr: &str, req: REQ, req_timeout: u64 , f: HANDLE_RPC_RESP<RESP>)
-//    where
-//    REQ: handler::Event + serde::Serialize,
-//    RESP:'static + handler::Event + serde::de::DeserializeOwned
-//{
-//    let service_inner = service.clone();
-//    let remotes = service.borrow_mut().remotes.clone();
-//    let con = match remotes.get(addr) {
-//        Some(con) => {
-//            let con_inner = con.try_clone().unwrap();
-//            futures::future::ok::<TcpStream, Error>(con_inner).boxed()
-//        },
-//        None => {
-//            let sock_addr = addr.to_string().parse().unwrap();
-//            let tcp = net::TcpStream::connect(&sock_addr, &service.borrow_mut().event_handle);
-//            let tcp_con = tcp.map(move |stream|{
-//                let fd = stream.as_raw_fd();
-//                let std_stream  = unsafe {
-//                    TcpStream::from_raw_fd(fd)
-//                };
-//                std_stream
-//            });
-//            tcp_con.boxed()
-//        },
-//    };
-//
-//    let resp = con.and_then(move |tcp_stream|{
-//        let tcp_stream_in = tcp_stream.try_clone().unwrap();
-//        service.borrow_mut().remotes.insert(addr.to_string(), tcp_stream_in);
-//        
-//        let async_con = net::TcpStream::from_stream(tcp_stream, &service.borrow_mut().event_handle).unwrap();
-//        let (reader, writer) = async_con.split();
-//        let req_message = handler::gen_message(&req);
-//        let req = io::write_all(writer , req_message);
-//        req.and_then(move|(_, _)| {
-//            let reader = BufReader::new(reader);
-//            let vote_resp = VoteResp {
-//                elect_id: 0,
-//                ack: 0,
-//            };
-//            let resp_message = handler::gen_message(&vote_resp);
-//            io::read_exact(reader, resp_message)
-//        })
-//    });
-//    
-//    let resp = resp.map(move|(_, resp_message)| {
-//        let mut vote_resp: RESP = handler::gen_obj(&resp_message[..]);
-//        f(service_inner, Ok(vote_resp));
-//    }).map_err(|_|());
-//
-//
-//
-//    let dur = Duration::from_secs(req_timeout);
-//    let service_inner = service.clone();
-//    let req_timeout = Timeout::new(dur, &service_inner.borrow_mut().event_handle).unwrap();
-//    let service_inner_timeout = service.clone();
-//    let req_timeout = req_timeout.and_then(move |_| {
-//        f(service_inner_timeout, Result::Err(()));
-//        Ok(())
-//    });
-//    
-//    let req_timeout = req_timeout.map_err(|_| ());
-//    let req_vote = resp.select(req_timeout).map(|_| ()).map_err(|_| ());
-//    service.borrow_mut().event_handle.spawn(req_vote);
-//}
+fn gen_rpc_handler<RESP: RpcHandler>(service: Rc<RefCell<BizurService>>, resp: Result<&[u8], ()>) {
+    match resp {
+        Ok(msg) => {
+            let res : RESP = handler::gen_obj(msg);
+            RESP::handle(service, Ok(res));
+        },
+        Err(e) => {
+            
+        },
+    }
+}
 
-fn sync_call<REQ, RESP>(service: &Rc<RefCell<BizurService>>, addr: &str, req: REQ, req_timeout: u64 , f: HANDLE_RPC_RESP<RESP>)
+
+
+fn sync_call<REQ, RESP>(service: &Rc<RefCell<BizurService>>, addr: &str, req: REQ, req_timeout: u64)
     where
     REQ: handler::Event + serde::Serialize,
-    RESP:'static + handler::Event + serde::de::DeserializeOwned,
+    RESP:'static + RpcHandler,
 {
         match service.borrow().remotes.get(addr) {
             None => {
 
-                f(service.clone(), Result::Err(()));
+                gen_rpc_handler::<RESP>(service.clone(), Result::Err(()));
             },
             Some(stream) => {
                 let stream_inner = stream.try_clone().unwrap();
-                sync_stream_call(service, stream_inner, req, req_timeout, f);
+                sync_stream_call::<REQ, RESP>(service, stream_inner, req, req_timeout);
             }, 
         };
 }
-fn sync_stream_call<REQ, RESP>(service: &Rc<RefCell<BizurService>>, tcp_stream: TcpStream, req: REQ, req_timeout: u64 , f: HANDLE_RPC_RESP<RESP>)
+fn sync_stream_call<REQ, RESP>(service: &Rc<RefCell<BizurService>>, tcp_stream: TcpStream, req: REQ, req_timeout: u64)
     where
     REQ: handler::Event + serde::Serialize,
-    RESP:'static + handler::Event + serde::de::DeserializeOwned,
+    RESP:'static + RpcHandler,
 
 {
     let service_inner = service.clone();
@@ -279,15 +239,14 @@ fn sync_stream_call<REQ, RESP>(service: &Rc<RefCell<BizurService>>, tcp_stream: 
         })
     };
     let resp = resp.map(move|(_, resp_message)| {
-        let mut vote_resp: RESP = handler::gen_obj(&resp_message);
-        f(service_inner, Ok(vote_resp));
+        gen_rpc_handler::<RESP>(service_inner, Ok(&resp_message[..]));
     }).map_err(|_|());
 
     let dur = Duration::from_secs(req_timeout);
     let req_timeout = Timeout::new(dur, &service.borrow_mut().event_handle).unwrap();
     let service_inner_timeout = service.clone();
     let req_timeout = req_timeout.and_then(move |_| {
-        f(service_inner_timeout, Result::Err(()));
+        gen_rpc_handler::<RESP>(service_inner_timeout, Result::Err(()));
         Ok(())
     });
     
