@@ -240,7 +240,22 @@ type HANDLE_RPC_RESP<T> = fn(service: Rc<RefCell<BizurService>>, resp: Result<T,
 //    service.borrow_mut().event_handle.spawn(req_vote);
 //}
 
+fn sync_call<REQ, RESP>(service: &Rc<RefCell<BizurService>>, addr: &str, req: REQ, req_timeout: u64 , f: HANDLE_RPC_RESP<RESP>)
+    where
+    REQ: handler::Event + serde::Serialize,
+    RESP:'static + handler::Event + serde::de::DeserializeOwned,
+{
+        match service.borrow().remotes.get(addr) {
+            None => {
 
+                f(service.clone(), Result::Err(()));
+            },
+            Some(stream) => {
+                let stream_inner = stream.try_clone().unwrap();
+                sync_stream_call(service, stream_inner, req, req_timeout, f);
+            }, 
+        };
+}
 fn sync_stream_call<REQ, RESP>(service: &Rc<RefCell<BizurService>>, tcp_stream: TcpStream, req: REQ, req_timeout: u64 , f: HANDLE_RPC_RESP<RESP>)
     where
     REQ: handler::Event + serde::Serialize,
@@ -268,8 +283,6 @@ fn sync_stream_call<REQ, RESP>(service: &Rc<RefCell<BizurService>>, tcp_stream: 
         f(service_inner, Ok(vote_resp));
     }).map_err(|_|());
 
-
-
     let dur = Duration::from_secs(req_timeout);
     let req_timeout = Timeout::new(dur, &service.borrow_mut().event_handle).unwrap();
     let service_inner_timeout = service.clone();
@@ -282,22 +295,54 @@ fn sync_stream_call<REQ, RESP>(service: &Rc<RefCell<BizurService>>, tcp_stream: 
     let req_vote = resp.select(req_timeout).map(|_| ()).map_err(|_| ());
     service.borrow_mut().event_handle.spawn(req_vote);
 }
+fn async_stream_call<REQ>(service: &Rc<RefCell<BizurService>>, tcp_stream: TcpStream, req: REQ)
+    where
+    REQ: handler::Event + serde::Serialize,
 
-fn connect_addr(service: &Rc<RefCell<BizurService>>, addr: &str) {
+{
     let service_inner = service.clone();
-    let addr_string = addr.to_string();
-    let sock_addr = addr.to_string().parse().unwrap();
-    let tcp = net::TcpStream::connect(&sock_addr, &service_inner.borrow_mut().event_handle);
-    let tcp_con = tcp.map(move |stream|{
-        let fd = stream.as_raw_fd();
-        let std_stream  = unsafe {
-            TcpStream::from_raw_fd(fd)
-        };
-        let remotes = &mut service_inner.borrow_mut().remotes;
-        remotes.insert(addr_string, std_stream);
-    }).map_err(|_|());
-    
-    service.borrow_mut().event_handle.spawn(tcp_con);
+    let resp = {
+        let async_con = net::TcpStream::from_stream(tcp_stream, &service_inner.borrow_mut().event_handle).unwrap();
+        let (_, writer) = async_con.split();
+        let req_message = handler::gen_message(&req);
+        let req = io::write_all(writer , req_message);
+        req.map(|_|())
+    };
+
+    let resp = resp.map_err(|_|());
+
+    service.borrow_mut().event_handle.spawn(resp);
+}
+
+fn keep_alive(service: &Rc<RefCell<BizurService>>, addr: &str) {
+
+    let exist = {
+        match service.borrow().remotes.get(addr)  {
+            None => {
+                false
+            },
+            _ => {
+                true
+            }
+        }
+    };
+
+    if !exist {
+        let service_inner = service.clone();
+        let addr_string = addr.to_string();
+        let sock_addr = addr.to_string().parse().unwrap();
+        let tcp = net::TcpStream::connect(&sock_addr, &service_inner.borrow_mut().event_handle);
+        let tcp_con = tcp.map(move |stream|{
+            let fd = stream.as_raw_fd();
+            let std_stream  = unsafe {
+                TcpStream::from_raw_fd(fd)
+            };
+            let remotes = &mut service_inner.borrow_mut().remotes;
+            remotes.insert(addr_string, std_stream);
+        }).map_err(|_|());
+        
+        service.borrow_mut().event_handle.spawn(tcp_con);
+    }
 }
 
 
