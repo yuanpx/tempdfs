@@ -3,6 +3,7 @@ pub mod handler;
 pub mod bizur;
 pub mod bizur_conf;
 pub mod http;
+pub mod ring;
 pub type NioSender = futures::sync::mpsc::UnboundedSender<Vec<u8>>;
 pub type IdType = u32;
 extern crate futures;
