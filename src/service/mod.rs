@@ -192,3 +192,17 @@ pub fn start_handle_listen<T: 'static + FrameWork>(service: Rc<RefCell<T>>, hand
 
     out_handle.spawn(srv);
 }
+
+
+pub fn start_handle_connect<T: 'static + FrameWork>(service: Rc<RefCell<T>>, handle: Handle, addr: SocketAddr) {
+    info!("connect on: {}", addr);
+    let out_handle = handle.clone();
+    let tcp = TcpStream::connect(&addr, &handle);
+    let client = tcp.map(move |stream|{
+        start_handle_connection(&service, &handle, addr, stream);
+        ()
+    }).map_err(|_|());
+
+    out_handle.spawn(client);
+}
+
