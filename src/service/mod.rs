@@ -20,7 +20,7 @@ use std::io::{Error, BufReader};
 
 use futures::Future;
 use futures::stream::{self, Stream};
-use tokio_core::net::TcpListener;
+use tokio_core::net::{TcpListener, TcpStream};
 use tokio_core::reactor::Core;
 use tokio_core::reactor::Handle;
 use tokio_io::io;
@@ -61,8 +61,7 @@ pub fn start_framework<T: 'static + FrameWork>(path: &str) {
     let service_loop_handler = service.clone();
     let addr = service.borrow().main_listen_addr().to_string();
     let addr = addr.parse().unwrap();
-
-    let socket = TcpListener::bind(&addr, &handle).unwrap();
+let socket = TcpListener::bind(&addr, &handle).unwrap();
     info!("Listening on: {}", addr);
 
     // let connections = Rc::new(RefCell::new(HashMap::new()));
@@ -131,3 +130,108 @@ pub fn start_framework<T: 'static + FrameWork>(path: &str) {
 
 
 
+
+fn start_handle_connection<T: 'static + FrameWork>(service: &Rc<RefCell<T>>, handle: &Handle, addr: SocketAddr, stream: TcpStream) {
+        info!("New Connection: {}", addr);
+        let (reader, writer) = stream.split();
+        let (tx, rx) = futures::sync::mpsc::unbounded::<Vec<u8>>();
+        // connections.borrow_mut().insert(addr, tx);
+        T::handle_connect(service.clone(), &addr, tx);
+        let service_inner = service.clone();
+        let reader = BufReader::new(reader);
+
+        let iter = stream::iter(iter::repeat(()).map(Ok::<(), Error>));
+        let socket_reader = iter.fold((reader, service_inner),
+                                      move |(reader, service_inner), _| {
+                                          let header_buf: [u8; 4] = [0; 4];
+                                          let header = io::read_exact(reader, header_buf);
+                                          let body = header.and_then(|(reader, header)| {
+                                              let body_len: u32 = handler::get_u32_length(&header[..]);
+                                              let buff: Vec<u8> = vec![0;body_len as usize];
+                                              io::read_exact(reader, buff)
+                                          });
+
+                                          let service_handle_event = service_inner.clone();
+                                          body.map(move |(reader, vec)| {
+                                              let event_id: u32 = handler::get_u32_length(&vec[0..4]);
+                                              T::handle_con_event(service_handle_event, &addr, event_id , &vec[4..]);
+                                              (reader, service_inner)
+                                          })
+                                      });
+
+        let socket_writer = rx.fold(writer, |writer, msg| {
+            let amt = io::write_all(writer, msg);
+            let amt = amt.map(|(writer, _)| writer);
+            amt.map_err(|_| ())
+        });
+
+
+        // let connections_in = connections.clone();
+        let service_in = service.clone();
+        let socket_reader = socket_reader.map_err(|_| ());
+        let connection = socket_reader.map(|_| ()).select(socket_writer.map(|_| ()));
+        handle.spawn(connection.then(move |_| {
+            // connections_in.borrow_mut().remove(&addr);
+            T::handle_close(service_in, &addr);
+            info!("Connection {} closed.", addr);
+            Ok(())
+        }));
+}
+
+pub fn start_handle_listen<T: 'static + FrameWork>(service: Rc<RefCell<T>>, handle: Handle, addr: SocketAddr) {
+    let socket = TcpListener::bind(&addr, &handle).unwrap();
+    info!("Listening on: {}", addr);
+    let out_handle = handle.clone();
+    // let connections = Rc::new(RefCell::new(HashMap::new()));
+    let srv = socket.incoming().for_each(move |(stream, addr)| {
+        info!("New Connection: {}", addr);
+        let (reader, writer) = stream.split();
+        let (tx, rx) = futures::sync::mpsc::unbounded::<Vec<u8>>();
+        // connections.borrow_mut().insert(addr, tx);
+        T::handle_connect(service.clone(), &addr, tx);
+        let service_inner = service.clone();
+        let reader = BufReader::new(reader);
+
+        let iter = stream::iter(iter::repeat(()).map(Ok::<(), Error>));
+        let socket_reader = iter.fold((reader, service_inner),
+                                      move |(reader, service_inner), _| {
+                                          let header_buf: [u8; 4] = [0; 4];
+                                          let header = io::read_exact(reader, header_buf);
+                                          let body = header.and_then(|(reader, header)| {
+                                              let body_len: u32 = handler::get_u32_length(&header[..]);
+                                              let buff: Vec<u8> = vec![0;body_len as usize];
+                                              io::read_exact(reader, buff)
+                                          });
+
+                                          let service_handle_event = service_inner.clone();
+                                          body.map(move |(reader, vec)| {
+                                              let event_id: u32 = handler::get_u32_length(&vec[0..4]);
+                                              T::handle_con_event(service_handle_event, &addr, event_id , &vec[4..]);
+                                              (reader, service_inner)
+                                          })
+                                      });
+
+        let socket_writer = rx.fold(writer, |writer, msg| {
+            let amt = io::write_all(writer, msg);
+            let amt = amt.map(|(writer, _)| writer);
+            amt.map_err(|_| ())
+        });
+
+
+        // let connections_in = connections.clone();
+        let service_in = service.clone();
+        let socket_reader = socket_reader.map_err(|_| ());
+        let connection = socket_reader.map(|_| ()).select(socket_writer.map(|_| ()));
+        handle.spawn(connection.then(move |_| {
+            // connections_in.borrow_mut().remove(&addr);
+            T::handle_close(service_in, &addr);
+            info!("Connection {} closed.", addr);
+            Ok(())
+        }));
+
+        Ok(())
+    });
+    let srv = srv.map(|_|()).map_err(|_|());
+
+    out_handle.spawn(srv);
+}
