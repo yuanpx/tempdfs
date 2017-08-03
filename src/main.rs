@@ -26,5 +26,5 @@ fn main() {
     info!("starting up");
     let conf = env::args().nth(1).unwrap_or("/home/yuanpeixuan/workspace/tempdfs/bizur.toml".to_string());
     
-    service::start_framework::<service::bizur::BizurService>(&conf);
+    //service::start_framework::<service::bizur::BizurService>(&conf);
 }
