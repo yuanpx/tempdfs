@@ -29,6 +29,7 @@ use tokio_core::reactor::Handle;
 use tokio_io::io;
 use tokio_io::AsyncRead;
 use std::net::SocketAddr;
+use std::ops::DerefMut;
 
 
 pub trait FrameWork {
@@ -154,38 +155,62 @@ pub struct RpcConn<T> {
     id: usize,
     sender: NioSender, 
     pendding_calls: LinkedList<Box<BuffHandler<T>>>, 
-    data: T,
+    data: Weak<RefCell<T>>,
 }
 
 
-impl <T> NetEvent for RpcConn<T> {
+impl <T: 'static> RpcConn<T> {
+    fn async_call<REQ: serde::Serialize + handler::Event>(&mut self, req: REQ) {
+        send_req(&mut self.sender, req);
+    }
+
+    fn sync_call<REQ: serde::Serialize + handler::Event, RESP: 'static + serde::de::DeserializeOwned>(&mut self, req: REQ, resp_handler: RpcHandler<T, RESP>) {
+
+        send_req(&mut self.sender, req);
+        let resp = gen_resp_handler(resp_handler);
+        self.pendding_calls.push_back(resp);
+    }
+
+    fn handle_sync_callback(&mut self, addr: &SocketAddr, id: usize, event_id: IdType, buf: &[u8]) {
+        let callback = self.pendding_calls.pop_front().unwrap();
+        callback(self, addr, id, event_id, buf);
+    }
+    
+}
+
+
+
+impl <T: 'static + NetEvent> NetEvent for RpcConn<T> {
     fn gen_next_id(&mut self) -> usize {
-        1
+        let real_data = self.data.upgrade().unwrap();
+        let id = real_data.borrow_mut().gen_next_id();
+        id
     }
 
     fn handle_connect(service: Rc<RefCell<Self>> ,addr: &SocketAddr, id: usize, nio_sender: NioSender) {
-        
+        let real_data = service.borrow_mut().data.upgrade().unwrap();
+        T::handle_connect(real_data, addr, id, nio_sender);
     }
 
     fn handle_close(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize) {
-        
+        let real_data = service.borrow_mut().data.upgrade().unwrap();
+        T::handle_close(real_data, addr, id);
     }
 
     fn handle_con_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: &[u8]) {
-        let callback = service.borrow_mut().pendding_calls.pop_front().unwrap();
-        callback(service, addr, id, event_id, buf);
+        service.borrow_mut().deref_mut().handle_sync_callback(addr, id, event_id, buf);
     }
 
 }
 
 
-type BuffHandler<T> = Fn(Rc<RefCell<RpcConn<T>>>, &SocketAddr, usize, IdType, &[u8]);
-type RpcHandler<T, RESP> = fn(service: Rc<RefCell<RpcConn<T>>>, id: usize, event_id: IdType, resp: RESP);
+type BuffHandler<T> = Fn(&mut RpcConn<T>, &SocketAddr, usize, IdType, &[u8]);
+type RpcHandler<T, RESP> = fn(service: &mut RpcConn<T>, id: usize, event_id: IdType, resp: RESP);
 
 pub  fn gen_resp_handler<T: 'static , RESP:'static + serde::de::DeserializeOwned>(resp_handler: RpcHandler<T,RESP>) -> Box<BuffHandler<T>>
 {
 
-    Box::new(move |service: Rc<RefCell<RpcConn<T>>>, addr: &SocketAddr,id: usize, event_id: IdType, buf: &[u8]| {
+    Box::new(move |service: &mut RpcConn<T>, addr: &SocketAddr,id: usize, event_id: IdType, buf: &[u8]| {
         let res : RESP = handler::gen_obj(buf);
         resp_handler(service, id, event_id, res);
     })
@@ -194,16 +219,4 @@ pub  fn gen_resp_handler<T: 'static , RESP:'static + serde::de::DeserializeOwned
 pub fn send_req<REQ: handler::Event + serde::Serialize>(sender: &mut NioSender, req: REQ) {
     let buffer = handler::gen_message(&req);
     sender.send(buffer).unwrap();
-}
-
-pub fn sync_call<T: 'static, REQ: serde::Serialize + handler::Event, RESP: 'static + serde::de::DeserializeOwned>(conn: &mut RpcConn<T>, req: REQ, resp_handler: RpcHandler<T, RESP>) {
-
-    send_req(&mut conn.sender, req);
-    let resp = gen_resp_handler(resp_handler);
-    conn.pendding_calls.push_back(resp);
-}
-
-
-pub fn async_call<T: 'static, REQ: serde::Serialize + handler::Event>(conn: &mut RpcConn<T>, req: REQ) {
-    send_req(&mut conn.sender, req);
 }
