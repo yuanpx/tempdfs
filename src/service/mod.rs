@@ -1,3 +1,6 @@
+extern crate serde;
+
+
 pub mod dio;
 pub mod handler;
 pub mod bizur;
@@ -11,7 +14,7 @@ extern crate tokio_core;
 extern crate tokio_io;
 
 
-use std::collections::HashMap;
+use std::collections::{HashMap, LinkedList};
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::iter;
@@ -147,12 +150,25 @@ pub fn start_connect<T: 'static + NetEvent>(service: Rc<RefCell<T>>, handle: Han
     out_handle.spawn(client);
 }
 
-pub struct RpcConnection {
+pub struct RpcConnection<T> {
     id: usize,
     sender: NioSender, 
-    pendding_call: usize, 
+    pendding_call: LinkedList<Box<BuffHandler<T>>>, 
 }
 
-type BuffHandler<T> = fn(service: Rc<RefCell<T>>, addr: &SocketAddr, id: IdType, buf: &[u8]);
-type RpcHandler<T, RESP> = fn(service: Rc<RefCell<T>>, id: IdType, resp: RESP);
+type BuffHandler<T> = fn(service: Rc<RefCell<T>>, addr: &SocketAddr,id: usize, event_id: IdType, buf: &[u8]);
+type RpcHandler<T, RESP> = fn(service: Rc<RefCell<T>>, id: usize, event_id: IdType, resp: RESP);
+
+pub  fn gen_resp_handler<T: 'static , RESP:'static + serde::de::DeserializeOwned>(resp_handler: RpcHandler<T,RESP>) -> Box<Fn(Rc<RefCell<T>>, &SocketAddr, usize, IdType, &[u8])>
+{
+
+    Box::new(move |service: Rc<RefCell<T>>, addr: &SocketAddr,id: usize, event_id: IdType, buf: &[u8]| {
+        let res : RESP = handler::gen_obj(buf);
+        resp_handler(service, id, event_id, res);
+    })
+}
+
+pub fn sync_call<T: 'static + NetEvent, REQ: serde::Serialize, RESP: serde::de::DeserializeOwned>(service: Rc<RefCell<T>>, id: usize, req: REQ, resp_handler: RpcHandler<T, RESP>) {
+    
+}
 
