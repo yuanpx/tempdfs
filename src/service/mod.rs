@@ -176,12 +176,12 @@ impl <T: 'static> RpcConn<T> {
 
 
     fn async_call<REQ: serde::Serialize + handler::Event>(&mut self, req: REQ) {
-        send_req(&mut self.sender, req);
+        send_req(&mut self.sender, &req);
     }
 
     fn sync_call<REQ: serde::Serialize + handler::Event, RESP: 'static + serde::de::DeserializeOwned>(&mut self, req: REQ, resp_handler: RpcHandler<T, RESP>) {
 
-        send_req(&mut self.sender, req);
+        send_req(&mut self.sender, &req);
         let resp = gen_resp_handler(resp_handler);
         self.pendding_calls.push_back(resp);
     }
@@ -231,8 +231,8 @@ pub  fn gen_resp_handler<T: 'static , RESP:'static + serde::de::DeserializeOwned
     })
 }
 
-pub fn send_req<REQ: handler::Event + serde::Serialize>(sender: &mut NioSender, req: REQ) {
-    let buffer = handler::gen_message(&req);
+pub fn send_req<REQ: handler::Event + serde::Serialize>(sender: &mut NioSender, req: &REQ) {
+    let buffer = handler::gen_message(req);
     sender.send(buffer).unwrap();
 }
 
