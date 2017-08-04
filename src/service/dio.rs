@@ -129,7 +129,7 @@ impl super::NetEvent for DioService {
         service.borrow_mut().connections.remove(addr);
     }
 
-    fn handle_con_event(service: Rc<RefCell<Self>>, addr: &SocketAddr,id: usize,  event_id : super::IdType, buf: &[u8]) {
+    fn handle_conn_event(service: Rc<RefCell<Self>>, addr: &SocketAddr,id: usize,  event_id : super::IdType, buf: &[u8]) {
         let read_file_op: ReadFileOp = handler::gen_obj(buf);
 
         let tx = service.borrow_mut().connections.get_mut(addr).unwrap().clone();

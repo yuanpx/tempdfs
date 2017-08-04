@@ -7,6 +7,9 @@ pub mod bizur;
 pub mod bizur_conf;
 pub mod http;
 pub mod ring;
+pub mod proxy;
+pub mod protocol;
+
 pub type NioSender = futures::sync::mpsc::UnboundedSender<Vec<u8>>;
 pub type IdType = u32;
 extern crate futures;
@@ -47,7 +50,7 @@ pub trait NetEvent {
 
     fn handle_close(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize);
 
-    fn handle_con_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: &[u8]);
+    fn handle_conn_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: &[u8]);
 }
 
 
@@ -99,7 +102,7 @@ pub fn handle_connection<T: 'static + NetEvent>(service: &Rc<RefCell<T>>, handle
                                           let service_handle_event = service_inner.clone();
                                           body.map(move |(reader, vec)| {
                                               let event_id: u32 = handler::get_u32_length(&vec[0..4]);
-                                              T::handle_con_event(service_handle_event, &addr,next_id, event_id , &vec[4..]);
+                                              T::handle_conn_event(service_handle_event, &addr,next_id, event_id , &vec[4..]);
                                               (reader, service_inner)
                                           })
                                       });
@@ -160,6 +163,17 @@ pub struct RpcConn<T> {
 
 
 impl <T: 'static> RpcConn<T> {
+
+    fn new(id: usize, sender: NioSender,data: Weak<RefCell<T>>) -> RpcConn<T> {
+        RpcConn {
+            id: id,
+            sender: sender,
+            pendding_calls: LinkedList::new(),
+            data: data
+        }
+    }
+
+
     fn async_call<REQ: serde::Serialize + handler::Event>(&mut self, req: REQ) {
         send_req(&mut self.sender, req);
     }
@@ -197,7 +211,7 @@ impl <T: 'static + NetEvent> NetEvent for RpcConn<T> {
         T::handle_close(real_data, addr, id);
     }
 
-    fn handle_con_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: &[u8]) {
+    fn handle_conn_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: &[u8]) {
         service.borrow_mut().deref_mut().handle_sync_callback(addr, id, event_id, buf);
     }
 
@@ -220,3 +234,23 @@ pub fn send_req<REQ: handler::Event + serde::Serialize>(sender: &mut NioSender, 
     let buffer = handler::gen_message(&req);
     sender.send(buffer).unwrap();
 }
+
+struct IdManager {
+    id: usize,
+}
+
+impl IdManager {
+    fn new() -> IdManager {
+        IdManager {
+            id: 0
+        }
+    }
+
+    fn get_next_id(&mut self) -> usize {
+        self.id += 1;
+        self.id
+    }
+
+}
+
+
