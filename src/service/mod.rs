@@ -8,6 +8,7 @@ pub mod bizur_conf;
 pub mod http;
 pub mod ring;
 pub mod proxy;
+pub mod osd;
 pub mod protocol;
 
 pub type NioSender = futures::sync::mpsc::UnboundedSender<Vec<u8>>;

@@ -31,8 +31,6 @@ impl OsdChecker {
 }
 
 
-
-
 impl NetEvent for OsdChecker {
 
     fn gen_next_id(&mut self) -> usize {

@@ -4,7 +4,7 @@ use super::handler::Event;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BEGIN_SEND_FILE{
-    name: String,
+    pub name: String,
 }
 
 impl Event for BEGIN_SEND_FILE {
@@ -15,8 +15,8 @@ impl Event for BEGIN_SEND_FILE {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SEND_FILE_BUFFER {
-    more: bool,
-    buf: Vec<u8>,
+    pub more: bool,
+    pub buf: Vec<u8>,
 }
 
 impl Event for SEND_FILE_BUFFER {
