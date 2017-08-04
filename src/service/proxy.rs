@@ -54,13 +54,13 @@ impl NetEvent for OsdChecker {
 
 struct OsdManager {
    id_manager: super::IdManager,
-   id_osds: HashMap<usize, RpcConn<OsdManager>>,
+   id_osds: HashMap<usize, Rc<RefCell<RpcConn<OsdManager>>>>,
    addr_osds: HashMap<SocketAddr, HashSet<usize>>,
    test_idx: usize,
-   data: Weak<RefCell<Proxy>>,
+   client_manager: Weak<RefCell<ClientManager>>,
 }
 impl OsdManager {
-    fn get_osd_by_id_mut(&mut self, id: usize) -> &mut RpcConn<OsdManager> {
+    fn get_osd_by_id_mut(&mut self, id: usize) -> &mut Rc<RefCell<RpcConn<OsdManager>>> {
         self.id_osds.get_mut(&id).unwrap()
     }
 }
@@ -70,7 +70,7 @@ impl OsdManager {
 struct ClientManager {
     id_manager: super::IdManager,
     id_clients: HashMap<usize, NioSender>,
-    data: Weak<RefCell<Proxy>>,
+    osd_manager: Weak<RefCell<OsdManager>>,
 }
 
 impl ClientManager {
@@ -113,11 +113,17 @@ impl NetEvent for ClientManager {
 
 impl ClientManager {
     fn handle_begin_send_file(&mut self, req: protocol::BEGIN_SEND_FILE) {
-        
+       let osd_manager: Rc<RefCell<OsdManager>> = self.osd_manager.upgrade().unwrap();
+       let test_idx = osd_manager.borrow_mut().deref_mut().test_idx;
+       let rpc_conn = osd_manager.borrow_mut().get_osd_by_id_mut(test_idx).clone();
+       rpc_conn.borrow_mut().async_call(req);
     }
 
     fn handle_send_file_buffer(&mut self, req: protocol::SEND_FILE_BUFFER) {
-        
+        let osd_manager: Rc<RefCell<OsdManager>> = self.osd_manager.upgrade().unwrap();
+        let test_idx = osd_manager.borrow_mut().deref_mut().test_idx;
+        let rpc_conn = osd_manager.borrow_mut().get_osd_by_id_mut(test_idx).clone();
+        rpc_conn.borrow_mut().async_call(req);
     }
 }
 
@@ -139,7 +145,8 @@ impl NetEvent for OsdManager {
     fn handle_connect(service: Rc<RefCell<Self>> ,addr: &SocketAddr, id: usize, nio_sender: NioSender) {
         let rpc_con = RpcConn::new(id, nio_sender, Rc::downgrade(&service));
         let mut osd_manager = service.borrow_mut();
-        osd_manager.deref_mut().id_osds.insert(id, rpc_con);
+        osd_manager.deref_mut().test_idx = id;
+        osd_manager.deref_mut().id_osds.insert(id, Rc::new(RefCell::new(rpc_con)));
         let addr_entry = osd_manager.deref_mut().addr_osds.entry(addr.clone()).or_insert(HashSet::new());
         (*addr_entry).insert(id);
     }
