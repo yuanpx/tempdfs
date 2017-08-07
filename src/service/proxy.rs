@@ -58,15 +58,17 @@ struct OsdManager {
    addr_osds: HashMap<SocketAddr, HashSet<usize>>,
    test_idx: usize,
    client_manager: Weak<RefCell<ClientManager>>,
+   loop_handle: super::Handle,
 }
 impl OsdManager {
-    fn new() -> OsdManager {
+    fn new(handle: super::Handle) -> OsdManager {
         OsdManager {
             id_manager: super::IdManager::new(),
             id_osds: HashMap::new(),
             addr_osds: HashMap::new(),
             test_idx: 0,
             client_manager: Weak::new(),
+            loop_handle: handle,
         }
     }
 
@@ -166,6 +168,9 @@ impl NetEvent for OsdManager {
         osd_manager.deref_mut().id_osds.remove(&id);
         let addr_entry = osd_manager.deref_mut().addr_osds.entry(addr.clone()).or_insert(HashSet::new());
         (*addr_entry).remove(&id);
+
+        let handle = service.borrow_mut().deref_mut().loop_handle.clone();
+        super::start_connect(service.clone(), handle, addr.clone());
     }
 
     fn handle_conn_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: &[u8]) {
@@ -182,7 +187,7 @@ pub struct ProxyService {
 impl super::FrameWork for ProxyService {
     type LoopCmd = ();
     fn new(params: &Vec<String>, loop_cmd_sender: futures::sync::mpsc::UnboundedSender<Self::LoopCmd>, loop_handle: super::Handle) -> Self {
-        let osd_manager = Rc::new(RefCell::new(OsdManager::new()));
+        let osd_manager = Rc::new(RefCell::new(OsdManager::new(loop_handle.clone())));
         let client_manager = Rc::new(RefCell::new(ClientManager::new()));
 
         osd_manager.borrow_mut().deref_mut().client_manager = Rc::downgrade(&client_manager);

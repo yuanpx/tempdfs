@@ -49,7 +49,6 @@ impl Client {
     }
 
 
-
     fn handle_send_file_buffer(&mut self, req: protocol::SEND_FILE_BUFFER){
         let mut task_info = self.task_info.take().unwrap();
         task_info.file.write_all(&req.buf[..]).unwrap();
@@ -65,12 +64,13 @@ impl Client {
 
 
 
-struct Osd {
+struct ProxyServerManager {
    id_proxy_clients: HashMap<usize, Client>,
    id_manager: super::IdManager,
+   osd_manager: Weak<RefCell<OsdServerManager>>,
 }
 
-impl NetEvent for Osd {
+impl NetEvent for ProxyServerManager {
     fn gen_next_id(&mut self) -> usize {
         self.id_manager.get_next_id()
     }
@@ -103,12 +103,13 @@ impl NetEvent for Osd {
     }
 }
 
-impl Osd {
+impl ProxyServerManager {
 
-    fn new() -> Osd {
-        Osd {
+    fn new() -> ProxyServerManager {
+        ProxyServerManager {
             id_proxy_clients: HashMap::new(),
             id_manager: super::IdManager::new(),
+            osd_manager: Weak::new(),
         }
     }
 
@@ -125,11 +126,20 @@ pub struct OsdService {
 impl super::FrameWork for OsdService {
     type LoopCmd = ();
     fn new(params: &Vec<String>, loop_cmd_sender: futures::sync::mpsc::UnboundedSender<Self::LoopCmd>, loop_handle: super::Handle) -> Self {
-        let osd = Rc::new(RefCell::new(Osd::new()));
+        let proxy_server_manager = Rc::new(RefCell::new(ProxyServerManager::new()));
 
-        let osd_addr = &params[0];
-        let osd_addr = osd_addr.clone().parse().unwrap();
-        super::start_listen(osd, loop_handle, osd_addr);
+        let osd_listen_addr = &params[0];
+        let osd_listen_addr = osd_listen_addr.clone().parse().unwrap();
+        let proxy_handle = loop_handle.clone();
+        super::start_listen(proxy_server_manager, proxy_handle, osd_listen_addr);
+
+        let other_osd_listen_addr = &params[1];
+        let other_osd_listen_addr = other_osd_listen_addr.clone().parse().unwrap();
+
+        let osd_handle = loop_handle.clone();
+        let osd_server_manager = Rc::new(RefCell::new(OsdServerManager::new(loop_handle)));
+        super::start_connect(osd_server_manager, osd_handle, other_osd_listen_addr);
+
         OsdService {
             cmd_sender: loop_cmd_sender
         }
@@ -140,3 +150,52 @@ impl super::FrameWork for OsdService {
     }
 }
 
+
+struct OsdServerManager {
+    id_manager: super::IdManager,
+    id_osds: HashMap<usize, Rc<RefCell<RpcConn<OsdServerManager>>>>,
+    addr_osds: HashMap<SocketAddr, HashSet<usize>>,
+    osd: Weak<RefCell<ProxyServerManager>>,
+    loop_handle: super::Handle,
+}
+
+impl OsdServerManager {
+    fn new(handle: super::Handle) -> OsdServerManager {
+        OsdServerManager {
+            id_manager: super::IdManager::new(),
+            id_osds: HashMap::new(),
+            addr_osds: HashMap::new(),
+            osd: Weak::new(),
+            loop_handle: handle,
+        }
+    } 
+}
+
+impl NetEvent for OsdServerManager {
+    fn gen_next_id(&mut self) -> usize {
+        self.id_manager.get_next_id()
+    }
+
+    fn handle_connect(service: Rc<RefCell<Self>> ,addr: &SocketAddr, id: usize, nio_sender: NioSender) {
+        let rpc_con = RpcConn::new(id, nio_sender, Rc::downgrade(&service));
+        let mut osd_manager = service.borrow_mut();
+        osd_manager.deref_mut().id_osds.insert(id, Rc::new(RefCell::new(rpc_con)));
+        let addr_entry = osd_manager.deref_mut().addr_osds.entry(addr.clone()).or_insert(HashSet::new());
+        (*addr_entry).insert(id);
+    }
+
+    fn handle_close(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize) {
+        let mut osd_manager = service.borrow_mut();
+        osd_manager.deref_mut().id_osds.remove(&id);
+        let addr_entry = osd_manager.deref_mut().addr_osds.entry(addr.clone()).or_insert(HashSet::new());
+        (*addr_entry).remove(&id);
+
+        let handle = service.borrow_mut().deref_mut().loop_handle.clone();
+        super::start_connect(service.clone(), handle, addr.clone());
+    }
+
+    fn handle_conn_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: &[u8]) {
+        
+    }
+    
+}
