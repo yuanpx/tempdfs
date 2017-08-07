@@ -1,3 +1,6 @@
+extern crate futures;
+
+
 use std::collections::{HashSet, HashMap, LinkedList};
 use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
@@ -51,13 +54,23 @@ impl NetEvent for OsdChecker {
 }
 
 struct OsdManager {
-   id_manager: super::IdManager,
-   id_osds: HashMap<usize, Rc<RefCell<RpcConn<OsdManager>>>>,
+   id_manager: super::IdManager, id_osds: HashMap<usize, Rc<RefCell<RpcConn<OsdManager>>>>,
    addr_osds: HashMap<SocketAddr, HashSet<usize>>,
    test_idx: usize,
    client_manager: Weak<RefCell<ClientManager>>,
 }
 impl OsdManager {
+    fn new() -> OsdManager {
+        OsdManager {
+            id_manager: super::IdManager::new(),
+            id_osds: HashMap::new(),
+            addr_osds: HashMap::new(),
+            test_idx: 0,
+            client_manager: Weak::new(),
+        }
+    }
+
+
     fn get_osd_by_id_mut(&mut self, id: usize) -> &mut Rc<RefCell<RpcConn<OsdManager>>> {
         self.id_osds.get_mut(&id).unwrap()
     }
@@ -72,16 +85,25 @@ struct ClientManager {
 }
 
 impl ClientManager {
+    fn new() -> ClientManager {
+        ClientManager {
+            id_manager: super::IdManager::new(),
+            id_clients: HashMap::new(),
+            osd_manager: Weak::new(),
+        }
+    }
+
+
     fn get_client_by_id_mut(&mut self, id: usize) -> &mut NioSender {
         self.id_clients.get_mut(&id).unwrap()
     }
 }
 
 
-struct Proxy {
-   client_manager: Rc<RefCell<ClientManager>>,
-   osd_manager: Rc<RefCell<OsdManager>>,
-}
+//struct Proxy {
+//   client_manager: Rc<RefCell<ClientManager>>,
+//   osd_manager: Rc<RefCell<OsdManager>>,
+//}
 
 impl NetEvent for ClientManager {
 
@@ -125,16 +147,6 @@ impl ClientManager {
     }
 }
 
-
-
-
-
-
-
-
-
-
-
 impl NetEvent for OsdManager {
     fn gen_next_id(&mut self) -> usize {
         self.id_manager.get_next_id()
@@ -162,4 +174,34 @@ impl NetEvent for OsdManager {
     
 }
 
+pub struct ProxyService {
+    cmd_sender: futures::sync::mpsc::UnboundedSender<()>
+}
+
+
+impl super::FrameWork for ProxyService {
+    type LoopCmd = ();
+    fn new(params: &Vec<String>, loop_cmd_sender: futures::sync::mpsc::UnboundedSender<Self::LoopCmd>, loop_handle: super::Handle) -> Self {
+        let osd_manager = Rc::new(RefCell::new(OsdManager::new()));
+        let client_manager = Rc::new(RefCell::new(ClientManager::new()));
+
+        osd_manager.borrow_mut().deref_mut().client_manager = Rc::downgrade(&client_manager);
+        client_manager.borrow_mut().deref_mut().osd_manager = Rc::downgrade(&osd_manager);
+        let proxy_addr = &params[0];
+        let proxy_addr = proxy_addr.clone().parse().unwrap();
+        let osd_addr = &params[1];
+        let osd_addr = osd_addr.clone().parse().unwrap();
+        let client_loop_handle = loop_handle.clone();
+        let osd_loop_handle = loop_handle.clone();
+        super::start_listen(client_manager, client_loop_handle, proxy_addr);
+        super::start_connect(osd_manager, osd_loop_handle, osd_addr);
+        ProxyService {
+            cmd_sender: loop_cmd_sender
+        }
+    }
+
+    fn handle_loop_event(service: Rc<RefCell<Self>>, cmd: Self::LoopCmd) {
+        
+    }
+}
 

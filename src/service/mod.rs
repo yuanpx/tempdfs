@@ -9,6 +9,7 @@ pub mod http;
 pub mod ring;
 pub mod proxy;
 pub mod osd;
+pub mod client;
 pub mod protocol;
 
 pub type NioSender = futures::sync::mpsc::UnboundedSender<Vec<u8>>;
@@ -34,11 +35,12 @@ use tokio_io::io;
 use tokio_io::AsyncRead;
 use std::net::SocketAddr;
 use std::ops::DerefMut;
+use std::vec::Vec;
 
 
 pub trait FrameWork {
     type LoopCmd;
-    fn new(path: &str, loop_cmd_sender: futures::sync::mpsc::UnboundedSender<Self::LoopCmd>, loop_handle: Handle) -> Self;
+    fn new(params: &Vec<String>, loop_cmd_sender: futures::sync::mpsc::UnboundedSender<Self::LoopCmd>, loop_handle: Handle) -> Self;
 
     fn handle_loop_event(service: Rc<RefCell<Self>>, cmd: Self::LoopCmd);
 }
@@ -56,13 +58,14 @@ pub trait NetEvent {
 
 
 
-pub fn start_framework<T: 'static + FrameWork>(path: &str) {
-    
+pub fn start_framework<T: 'static + FrameWork>(params: &Vec<String>) {
+    println!("Start FrameWork");
+    info!("Start FrameWork");
     let (loop_cmd_tx, loop_cmd_rx) = futures::sync::mpsc::unbounded::<T::LoopCmd>();
     let mut core = Core::new().unwrap();
     let handle = core.handle();
     let loop_handler = handle.clone();
-    let service = T::new(path, loop_cmd_tx, loop_handler);
+    let service = T::new(params, loop_cmd_tx, loop_handler);
     let service = Rc::new(RefCell::new(service));
     let service_loop_handler = service.clone();
 
@@ -231,7 +234,7 @@ pub  fn gen_resp_handler<T: 'static , RESP:'static + serde::de::DeserializeOwned
     })
 }
 
-pub fn send_req<REQ: handler::Event + serde::Serialize>(sender: &mut NioSender, req: &REQ) {
+pub fn send_req<REQ: handler::Event + serde::Serialize>(sender: &NioSender, req: &REQ) {
     let buffer = handler::gen_message(req);
     sender.send(buffer).unwrap();
 }

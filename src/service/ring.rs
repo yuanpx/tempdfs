@@ -119,5 +119,4 @@ impl Ring {
         }
         res
     }
-
 }

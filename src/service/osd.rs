@@ -1,3 +1,5 @@
+extern crate futures;
+
 use std::collections::{HashSet, HashMap, LinkedList};
 use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
@@ -102,9 +104,39 @@ impl NetEvent for Osd {
 }
 
 impl Osd {
+
+    fn new() -> Osd {
+        Osd {
+            id_proxy_clients: HashMap::new(),
+            id_manager: super::IdManager::new(),
+        }
+    }
+
     fn get_proxy_client_by_id_mut(&mut self,id: usize) -> &mut Client {
         self.id_proxy_clients.get_mut(&id).unwrap()
     } 
 }
 
+pub struct OsdService {
+    cmd_sender: futures::sync::mpsc::UnboundedSender<()>
+}
+
+
+impl super::FrameWork for OsdService {
+    type LoopCmd = ();
+    fn new(params: &Vec<String>, loop_cmd_sender: futures::sync::mpsc::UnboundedSender<Self::LoopCmd>, loop_handle: super::Handle) -> Self {
+        let osd = Rc::new(RefCell::new(Osd::new()));
+
+        let osd_addr = &params[0];
+        let osd_addr = osd_addr.clone().parse().unwrap();
+        super::start_listen(osd, loop_handle, osd_addr);
+        OsdService {
+            cmd_sender: loop_cmd_sender
+        }
+    }
+
+    fn handle_loop_event(service: Rc<RefCell<Self>>, cmd: Self::LoopCmd) {
+        
+    }
+}
 
