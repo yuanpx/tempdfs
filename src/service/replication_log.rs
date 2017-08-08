@@ -8,38 +8,47 @@ use std::collections::LinkedList;
 use self::rocksdb::{DB, Direction, IteratorMode};
 
 #[derive(Serialize, Deserialize, Debug)]
-struct PartLogEntry {
+pub struct PartLogEntry {
     op: usize,
     object: String,
     version: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct PartInfo {
+pub struct PartInfo {
     last_complete: usize,
     last_updata: usize,
-    entry_list: VecDeque<PartLogEntry>,
     version: usize
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct PartLogManager {
+pub struct PartIdManager {
     part_log_list: LinkedList<usize>
 }
 
-trait DBObj: serde::Serialize + serde::de::DeserializeOwned{
+pub struct PartLog {
+    info: PartInfo,
+    entries: VecDeque<PartLogEntry>,
+}
+
+pub struct PartLogManager {
+    part_logs: HashMap<usize, PartLog>,
+    part_ids: PartIdManager
+}
+
+pub trait DBObj: serde::Serialize + serde::de::DeserializeOwned{
     fn new() -> Self;
 }
 
-impl PartLogManager {
-    fn new() -> PartLogManager {
-        PartLogManager {
+impl PartIdManager {
+    fn new() -> PartIdManager {
+        PartIdManager {
             part_log_list: LinkedList::new()
         }
     }
 }
 
-fn get_range_db_obj<T: DBObj>(db: &mut DB, start: &str, end: &str) -> VecDeque<T> {
+pub fn get_range_db_obj<T: DBObj>(db: &mut DB, start: &str, end: &str) -> VecDeque<T> {
     
     let iter = db.iterator(IteratorMode::From(start.as_bytes(), Direction::Forward));
     let mut res = VecDeque::new();
@@ -56,7 +65,7 @@ fn get_range_db_obj<T: DBObj>(db: &mut DB, start: &str, end: &str) -> VecDeque<T
 }
 
 
-fn get_db_obj<T: DBObj>(db: &mut DB, name: &str)-> Result<T, rocksdb::Error> {
+pub fn get_db_obj<T: DBObj>(db: &mut DB, name: &str)-> Result<T, rocksdb::Error> {
     match db.get(name.as_bytes()) {
         Ok(Some(value)) => {
             let buffer = value.to_vec();
@@ -72,7 +81,7 @@ fn get_db_obj<T: DBObj>(db: &mut DB, name: &str)-> Result<T, rocksdb::Error> {
     }
 }
 
-fn save_db_obj<T: DBObj>(db: &mut DB, name: &str, obj: &T)  {
+pub fn save_db_obj<T: DBObj>(db: &mut DB, name: &str, obj: &T)  {
     let buffer = super::handler::gen_buffer(obj);
     db.put(b"part_log", &buffer[..]);
 }
