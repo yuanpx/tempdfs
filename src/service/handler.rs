@@ -34,6 +34,13 @@ pub fn get_u32_length(buf_slice: &[u8]) -> u32 {
         std::mem::transmute::<[u8;4], u32>(buf)
     }
 }
+pub fn gen_buffer<T>(t: &T) -> Vec<u8>
+    where T: Serialize
+{
+    let mut obj_buf = Vec::new();
+    t.serialize(&mut Serializer::new(&mut obj_buf)).unwrap();
+    obj_buf
+}
 
 pub fn gen_message<T>(t: &T) -> Vec<u8>
     where T: Serialize + Event
