@@ -40,6 +40,8 @@ use tokio_io::AsyncRead;
 use std::net::SocketAddr;
 use std::ops::DerefMut;
 use std::vec::Vec;
+use std::boxed::FnBox;
+
 
 
 pub trait FrameWork {
@@ -165,7 +167,7 @@ pub fn start_connect<T: 'static + NetEvent>(service: Rc<RefCell<T>>, handle: Han
 pub struct RpcConn<T> {
     id: usize,
     sender: NioSender, 
-    pendding_calls: LinkedList<Box<BuffHandler<T>>>, 
+    pendding_calls: LinkedList<Box<FnBox(usize, IdType, &[u8])>>, 
     data: Weak<RefCell<T>>,
 }
 
@@ -186,16 +188,15 @@ impl <T: 'static> RpcConn<T> {
         send_req(&mut self.sender, &req);
     }
 
-    fn sync_call<REQ: serde::Serialize + handler::Event, RESP: 'static + serde::de::DeserializeOwned>(&mut self, req: REQ, resp_handler: RpcHandler<T, RESP>) {
-
+    fn sync_call<REQ: serde::Serialize + handler::Event, RESP: 'static + serde::de::DeserializeOwned, HANDLER:'static + FnOnce(usize, IdType, RESP)>(&mut self, req: REQ, resp_handler: HANDLER) {
         send_req(&mut self.sender, &req);
         let resp = gen_resp_handler(resp_handler);
         self.pendding_calls.push_back(resp);
     }
 
     fn handle_sync_callback(&mut self, addr: &SocketAddr, id: usize, event_id: IdType, buf: &[u8]) {
-        let callback = self.pendding_calls.pop_front().unwrap();
-        callback(self, addr, id, event_id, buf);
+        let mut callback = self.pendding_calls.pop_front().unwrap();
+        callback.call_box((id, event_id, buf));
     }
     
 }
@@ -226,15 +227,14 @@ impl <T: 'static + NetEvent> NetEvent for RpcConn<T> {
 }
 
 
-type BuffHandler<T> = Fn(&mut RpcConn<T>, &SocketAddr, usize, IdType, &[u8]);
-type RpcHandler<T, RESP> = fn(service: &mut RpcConn<T>, id: usize, event_id: IdType, resp: RESP);
+type BuffHandler= FnBox(usize, IdType, &[u8]);
 
-pub  fn gen_resp_handler<T: 'static , RESP:'static + serde::de::DeserializeOwned>(resp_handler: RpcHandler<T,RESP>) -> Box<BuffHandler<T>>
+pub  fn gen_resp_handler<RESP:'static + serde::de::DeserializeOwned, HANDLER: 'static + FnOnce(usize, IdType, RESP)>(resp_handler: HANDLER) -> Box<BuffHandler>
 {
 
-    Box::new(move |service: &mut RpcConn<T>, addr: &SocketAddr,id: usize, event_id: IdType, buf: &[u8]| {
+    Box::new(move |id, event_id, buf| {
         let res : RESP = handler::gen_obj(buf);
-        resp_handler(service, id, event_id, res);
+        resp_handler(id, event_id, res);
     })
 }
 

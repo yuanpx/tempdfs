@@ -1,24 +1,28 @@
+extern crate rocksdb; 
 extern crate futures;
+use self::rocksdb::DB;
 
 use std::sync::mpsc;
 
 use super::transaction::Transaction;
 use super::replication_log::PartLogManager;
 
-struct Part {
-    id: usize,
+pub struct Part {
+    pub worker_id: usize,
+    pub tx: mpsc::Sender<PartIoCmd>,
 }
 
 
 pub struct PartWorker{
-    part_id: usize,
-    part_log_manager: super::replication_log::PartLogManager
+    worker_id: usize,
+    db_path: String,
+    part_log_manager: super::replication_log::PartLogManager,
+    db: DB
 }
-
 
 pub type PartIoNotifySender = futures::sync::oneshot::Sender<()>;
 
-pub struct PartIoCmd(super::transaction::Transaction,PartIoNotifySender);
+pub struct PartIoCmd(pub Transaction,pub PartIoNotifySender);
 
 pub fn part_io_worker_thread(rx: mpsc::Receiver<PartIoCmd>,mut  part_worker: PartWorker) {
     let mut continue_flag = true;

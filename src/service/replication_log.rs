@@ -14,7 +14,17 @@ pub struct PartLogEntry {
     version: usize,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+impl PartLogEntry {
+    pub fn clone(&self) -> PartLogEntry {
+        PartLogEntry {
+            op: self.op,
+            object: self.object.clone(),
+            version: self.version
+        }
+    }
+}
+
+#[derive (Serialize, Deserialize, Debug)]
 pub struct PartInfo {
     last_complete: usize,
     last_updata: usize,

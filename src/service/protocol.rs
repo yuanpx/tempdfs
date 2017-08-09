@@ -30,3 +30,9 @@ impl Event for super::transaction::ReplicaTransaction {
         3
     }
 }
+
+impl Event for super::transaction::ReplicaTransactionResp {
+    fn event_id() -> u32 {
+        4
+    }
+}

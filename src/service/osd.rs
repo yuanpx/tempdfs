@@ -15,6 +15,12 @@ use super::handler::Event;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::Write;
+use super::transaction::Transaction;
+use super::transaction::ReplicaTransaction;
+use super::transaction::ReplicaTransactionResp;
+use super::replication_log::PartLogManager;
+
+use super::part::*;
 
 
 struct TaskInfo {
@@ -68,6 +74,7 @@ struct ProxyServerManager {
    id_proxy_clients: HashMap<usize, Client>,
    id_manager: super::IdManager,
    osd_manager: Weak<RefCell<OsdServerManager>>,
+   part_manager: HashMap<usize, Part>,
 }
 
 impl NetEvent for ProxyServerManager {
@@ -104,12 +111,12 @@ impl NetEvent for ProxyServerManager {
 }
 
 impl ProxyServerManager {
-
     fn new() -> ProxyServerManager {
         ProxyServerManager {
             id_proxy_clients: HashMap::new(),
             id_manager: super::IdManager::new(),
             osd_manager: Weak::new(),
+            part_manager: HashMap::new(),
         }
     }
 
@@ -117,6 +124,50 @@ impl ProxyServerManager {
         self.id_proxy_clients.get_mut(&id).unwrap()
     } 
 }
+
+impl ProxyServerManager {
+    fn handle_part_transaction(service: &Rc<RefCell<Self>>,part_ids: &Vec<usize>, transaction: Transaction) {
+        let worker_id = trans_id_from_part_to_worker(part_ids[0]);
+        let osd_manager = service.borrow_mut().deref_mut().osd_manager.upgrade().unwrap();
+        {
+            for replica_id in &part_ids[1..] {
+                let replica_transaction = transaction.gen_replica_transaction();
+                let addr = trans_id_from_part_to_addr(*replica_id);
+                let osd_rpc_conn = osd_manager.borrow_mut().deref_mut().get_osd_rpc_conn(&addr);
+                let (tx, rx) = futures::sync::oneshot::channel();
+                osd_rpc_conn.borrow_mut().sync_call(replica_transaction,move |id: usize, event_id:u32 , resp: ReplicaTransactionResp| {
+                    tx.send(()).unwrap();
+                } );
+
+                
+            }
+            let mut proxy_manager = service.borrow_mut();
+            let mut proxy_manager = proxy_manager.deref_mut();
+            let mut part = proxy_manager.part_manager.get_mut(&worker_id).unwrap();
+            let (tx, rx) = futures::sync::oneshot::channel();
+
+            let part_io_cmd = PartIoCmd(transaction, tx);
+            part.tx.send(part_io_cmd).unwrap();
+
+
+        }
+       
+    }
+}
+
+fn trans_id_from_part_to_worker(part_id: usize) -> usize {
+    0
+}
+
+fn trans_id_from_part_to_addr(part_id: usize) -> SocketAddr {
+    "127.0.0.1:9090".parse().unwrap()
+}
+
+
+
+
+
+
 
 pub struct OsdService {
     cmd_sender: futures::sync::mpsc::UnboundedSender<()>
@@ -155,7 +206,7 @@ struct OsdServerManager {
     id_manager: super::IdManager,
     id_osds: HashMap<usize, Rc<RefCell<RpcConn<OsdServerManager>>>>,
     addr_osds: HashMap<SocketAddr, HashSet<usize>>,
-    osd: Weak<RefCell<ProxyServerManager>>,
+    proxy_manager: Weak<RefCell<ProxyServerManager>>,
     loop_handle: super::Handle,
 }
 
@@ -165,10 +216,20 @@ impl OsdServerManager {
             id_manager: super::IdManager::new(),
             id_osds: HashMap::new(),
             addr_osds: HashMap::new(),
-            osd: Weak::new(),
+            proxy_manager: Weak::new(),
             loop_handle: handle,
         }
     } 
+
+    fn get_osd_rpc_conn(&self, addr: &SocketAddr) -> Rc<RefCell<RpcConn<OsdServerManager>>> {
+        let ids = self.addr_osds.get(addr).unwrap();
+        let id: usize = 0;
+        for conn_id in ids {
+            id = *conn_id;
+            break;
+        }
+        self.id_osds.get(&id).unwrap().clone()
+    }
 }
 
 impl NetEvent for OsdServerManager {

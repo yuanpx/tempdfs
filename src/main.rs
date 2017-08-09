@@ -1,5 +1,7 @@
 #![feature(associated_type_defaults)]
-
+#![feature(fnbox)]
+#![feature(slice_patterns)]
+#![feature(unboxed_clourses)]
 #[macro_use]
 extern crate log;
 extern crate env_logger; 
