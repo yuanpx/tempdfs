@@ -14,6 +14,7 @@ pub mod protocol;
 pub mod replication_log;
 pub mod io_operation;
 pub mod transaction;
+pub mod part;
 
 pub type NioSender = futures::sync::mpsc::UnboundedSender<Vec<u8>>;
 pub type IdType = u32;
