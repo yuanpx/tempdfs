@@ -59,7 +59,7 @@ pub trait NetEvent {
 
     fn handle_close(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize);
 
-    fn handle_conn_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: &[u8]);
+    fn handle_conn_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: Vec<u8>);
 }
 
 
@@ -110,9 +110,10 @@ pub fn handle_connection<T: 'static + NetEvent>(service: &Rc<RefCell<T>>, handle
                                           });
 
                                           let service_handle_event = service_inner.clone();
-                                          body.map(move |(reader, vec)| {
+                                          body.map(move |(reader, mut vec)| {
                                               let event_id: u32 = handler::get_u32_length(&vec[0..4]);
-                                              T::handle_conn_event(service_handle_event, &addr,next_id, event_id , &vec[4..]);
+                                              vec.drain(0..4);
+                                              T::handle_conn_event(service_handle_event, &addr,next_id, event_id , vec);
                                               (reader, service_inner)
                                           })
                                       });
@@ -167,7 +168,7 @@ pub fn start_connect<T: 'static + NetEvent>(service: Rc<RefCell<T>>, handle: Han
 pub struct RpcConn<T> {
     id: usize,
     sender: NioSender, 
-    pendding_calls: LinkedList<Box<FnBox(usize, IdType, &[u8])>>, 
+    pendding_calls: LinkedList<Box<FnBox(usize, IdType, Vec<u8>)>>, 
     data: Weak<RefCell<T>>,
 }
 
@@ -194,7 +195,7 @@ impl <T: 'static> RpcConn<T> {
         self.pendding_calls.push_back(resp);
     }
 
-    fn handle_sync_callback(&mut self, addr: &SocketAddr, id: usize, event_id: IdType, buf: &[u8]) {
+    fn handle_sync_callback(&mut self, addr: &SocketAddr, id: usize, event_id: IdType, buf: Vec<u8>) {
         let mut callback = self.pendding_calls.pop_front().unwrap();
         callback.call_box((id, event_id, buf));
     }
@@ -220,20 +221,20 @@ impl <T: 'static + NetEvent> NetEvent for RpcConn<T> {
         T::handle_close(real_data, addr, id);
     }
 
-    fn handle_conn_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: &[u8]) {
+    fn handle_conn_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: Vec<u8>) {
         service.borrow_mut().deref_mut().handle_sync_callback(addr, id, event_id, buf);
     }
 
 }
 
 
-type BuffHandler= FnBox(usize, IdType, &[u8]);
+type BuffHandler= FnBox(usize, IdType, Vec<u8>);
 
 pub  fn gen_resp_handler<RESP:'static + serde::de::DeserializeOwned, HANDLER: 'static + FnOnce(usize, IdType, RESP)>(resp_handler: HANDLER) -> Box<BuffHandler>
 {
 
-    Box::new(move |id, event_id, buf| {
-        let res : RESP = handler::gen_obj(buf);
+    Box::new(move |id, event_id, buf: Vec<u8>| {
+        let res : RESP = handler::gen_obj(&buf[..]);
         resp_handler(id, event_id, res);
     })
 }

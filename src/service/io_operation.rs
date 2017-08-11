@@ -9,10 +9,10 @@ pub enum IoOperation {
 impl IoOperation {
     pub fn clone(&self) -> IoOperation {
         match self {
-            &IoOperation::Write(a, b) => {
+            &IoOperation::Write(ref a, ref b) => {
                 IoOperation::Write(a.clone(), b.clone())
             },
-            &IoOperation::Del(a) => {
+            &IoOperation::Del(ref a) => {
                 IoOperation::Del(a.clone())
             }
         }   

@@ -56,7 +56,7 @@ impl NetEvent for Client {
         service_mut.sender = None;
     }
 
-    fn handle_conn_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: &[u8]) {
+    fn handle_conn_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: Vec<u8>) {
     }
 }
 

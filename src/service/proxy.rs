@@ -48,7 +48,7 @@ impl NetEvent for OsdChecker {
         service.borrow_mut().alive_osds.remove(addr);
     }
 
-    fn handle_conn_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: &[u8]) {
+    fn handle_conn_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: Vec<u8>) {
         
     }
 }
@@ -121,13 +121,13 @@ impl NetEvent for ClientManager {
         service.borrow_mut().id_clients.remove(&id);
     }
 
-    fn handle_conn_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: &[u8]) {
+    fn handle_conn_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: Vec<u8>) {
         if event_id == protocol::BEGIN_SEND_FILE::event_id() {
-           let req: protocol::BEGIN_SEND_FILE = super::handler::gen_obj(buf);
+           let req: protocol::BEGIN_SEND_FILE = super::handler::gen_obj(&buf[..]);
            service.borrow_mut().handle_begin_send_file(req);
             
         } else if event_id == protocol::SEND_FILE_BUFFER::event_id() {
-            let req: protocol::SEND_FILE_BUFFER = super::handler::gen_obj(buf);
+            let req: protocol::SEND_FILE_BUFFER = super::handler::gen_obj(&buf[..]);
             service.borrow_mut().handle_send_file_buffer(req);
         }
     }
@@ -173,7 +173,7 @@ impl NetEvent for OsdManager {
         super::start_connect(service.clone(), handle, addr.clone());
     }
 
-    fn handle_conn_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: &[u8]) {
+    fn handle_conn_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: Vec<u8>) {
         
     }
     

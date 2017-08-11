@@ -19,6 +19,7 @@ use super::transaction::Transaction;
 use super::transaction::ReplicaTransaction;
 use super::transaction::ReplicaTransactionResp;
 use super::replication_log::PartLogManager;
+use futures::Future;
 
 use super::part::*;
 
@@ -92,16 +93,16 @@ impl NetEvent for ProxyServerManager {
         service.borrow_mut().id_proxy_clients.remove(&id);
     }
 
-    fn handle_conn_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: &[u8]) {
+    fn handle_conn_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: Vec<u8>) {
         if event_id == protocol::BEGIN_SEND_FILE::event_id() {
-            let req: protocol::BEGIN_SEND_FILE = super::handler::gen_obj(buf);
+            let req: protocol::BEGIN_SEND_FILE = super::handler::gen_obj(&buf[..]);
             let mut service_borrrow = service.borrow_mut();
             let service_mut = service_borrrow.deref_mut();
             let client = service_mut.get_proxy_client_by_id_mut(id);
             client.handle_begin_send_file(req);
             
         } else if event_id == protocol::SEND_FILE_BUFFER::event_id() {
-            let req: protocol::SEND_FILE_BUFFER = super::handler::gen_obj(buf);
+            let req: protocol::SEND_FILE_BUFFER = super::handler::gen_obj(&buf[..]);
             let mut service_borrrow = service.borrow_mut();
             let service_mut = service_borrrow.deref_mut();
             let client = service_mut.get_proxy_client_by_id_mut(id);
@@ -126,32 +127,41 @@ impl ProxyServerManager {
 }
 
 impl ProxyServerManager {
-    fn handle_part_transaction(service: &Rc<RefCell<Self>>,part_ids: &Vec<usize>, transaction: Transaction) {
+    fn handle_part_transaction(service: &Rc<RefCell<Self>>,part_ids: &Vec<usize>, proxy_id: usize, transaction: Transaction) {
         let worker_id = trans_id_from_part_to_worker(part_ids[0]);
+        let service_inner = service.clone();
         let osd_manager = service.borrow_mut().deref_mut().osd_manager.upgrade().unwrap();
         {
+            let mut all_reqs = Vec::new();
             for replica_id in &part_ids[1..] {
                 let replica_transaction = transaction.gen_replica_transaction();
                 let addr = trans_id_from_part_to_addr(*replica_id);
                 let osd_rpc_conn = osd_manager.borrow_mut().deref_mut().get_osd_rpc_conn(&addr);
-                let (tx, rx) = futures::sync::oneshot::channel();
+                let (tx, rx) = futures::sync::oneshot::channel::<()>();
                 osd_rpc_conn.borrow_mut().sync_call(replica_transaction,move |id: usize, event_id:u32 , resp: ReplicaTransactionResp| {
                     tx.send(()).unwrap();
                 } );
-
-                
+                let req = rx.map(|_|{}).map_err(|_|{});
+                all_reqs.push(req.boxed());
             }
             let mut proxy_manager = service.borrow_mut();
             let mut proxy_manager = proxy_manager.deref_mut();
             let mut part = proxy_manager.part_manager.get_mut(&worker_id).unwrap();
-            let (tx, rx) = futures::sync::oneshot::channel();
+            let (tx, rx) = futures::sync::oneshot::channel::<()>();
 
             let part_io_cmd = PartIoCmd(transaction, tx);
             part.tx.send(part_io_cmd).unwrap();
-
-
+            let req = rx.map(|_|{}).map_err(|_|{});
+            all_reqs.push(req.boxed());
+            let replicat_req = futures::future::join_all(all_reqs).map(move |_|{
+                
+            }).map_err(|_|{});
         }
        
+    }
+
+    fn response_proxy<T: super::handler::Event + serde::Serialize>(&mut self, proxy_id: usize, resp: &T) -> std::io::Result<()> {
+        
     }
 }
 
@@ -223,7 +233,7 @@ impl OsdServerManager {
 
     fn get_osd_rpc_conn(&self, addr: &SocketAddr) -> Rc<RefCell<RpcConn<OsdServerManager>>> {
         let ids = self.addr_osds.get(addr).unwrap();
-        let id: usize = 0;
+        let mut id: usize = 0;
         for conn_id in ids {
             id = *conn_id;
             break;
@@ -255,7 +265,7 @@ impl NetEvent for OsdServerManager {
         super::start_connect(service.clone(), handle, addr.clone());
     }
 
-    fn handle_conn_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: &[u8]) {
+    fn handle_conn_event(service: Rc<RefCell<Self>>, addr: &SocketAddr, id: usize, event_id: IdType, buf: Vec<u8>) {
         
     }
     
