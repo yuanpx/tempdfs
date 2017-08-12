@@ -1,4 +1,5 @@
 extern crate futures;
+extern crate serde;
 
 use std::collections::{HashSet, HashMap, LinkedList};
 use std::net::SocketAddr;
@@ -160,9 +161,9 @@ impl ProxyServerManager {
        
     }
 
-    fn response_proxy<T: super::handler::Event + serde::Serialize>(&mut self, proxy_id: usize, resp: &T) -> std::io::Result<()> {
-        
-    }
+    //fn response_proxy<T: super::handler::Event + serde::Serialize>(&mut self, proxy_id: usize, resp: &T) -> std::io::Result<()> {
+    //    
+    //}
 }
 
 fn trans_id_from_part_to_worker(part_id: usize) -> usize {
