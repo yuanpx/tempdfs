@@ -1,4 +1,5 @@
 extern crate futures;
+extern crate serde;
 
 use std::collections::{HashSet, HashMap, LinkedList};
 use std::net::SocketAddr;
@@ -20,6 +21,7 @@ use super::transaction::ReplicaTransaction;
 use super::transaction::ReplicaTransactionResp;
 use super::replication_log::PartLogManager;
 use futures::Future;
+use std::io;
 
 use super::part::*;
 
@@ -76,6 +78,7 @@ struct ProxyServerManager {
    id_manager: super::IdManager,
    osd_manager: Weak<RefCell<OsdServerManager>>,
    part_manager: HashMap<usize, Part>,
+   loop_handle: super::Handle,
 }
 
 impl NetEvent for ProxyServerManager {
@@ -112,12 +115,13 @@ impl NetEvent for ProxyServerManager {
 }
 
 impl ProxyServerManager {
-    fn new() -> ProxyServerManager {
+    fn new(handle: super::Handle) -> ProxyServerManager {
         ProxyServerManager {
             id_proxy_clients: HashMap::new(),
             id_manager: super::IdManager::new(),
             osd_manager: Weak::new(),
             part_manager: HashMap::new(),
+            loop_handle: handle,
         }
     }
 
@@ -154,14 +158,20 @@ impl ProxyServerManager {
             let req = rx.map(|_|{}).map_err(|_|{});
             all_reqs.push(req.boxed());
             let replicat_req = futures::future::join_all(all_reqs).map(move |_|{
-                
+                let res = super::protocol::SEND_FILE_RES{
+                    res: true,
+                };
+                service_inner.borrow_mut().response_proxy(proxy_id, &res);
             }).map_err(|_|{});
+            service.borrow_mut().deref_mut().loop_handle.spawn(replicat_req);
+            
         }
-       
     }
 
-    fn response_proxy<T: super::handler::Event + serde::Serialize>(&mut self, proxy_id: usize, resp: &T) -> std::io::Result<()> {
-        
+    fn response_proxy<T: super::handler::Event + serde::Serialize>(&mut self, proxy_id: usize, resp: &T) -> io::Result<()> {
+        let mut client  = self.id_proxy_clients.get_mut(&proxy_id).unwrap();
+        super::send_req(&client.sender, resp);
+        Ok(())
     }
 }
 
@@ -187,7 +197,8 @@ pub struct OsdService {
 impl super::FrameWork for OsdService {
     type LoopCmd = ();
     fn new(params: &Vec<String>, loop_cmd_sender: futures::sync::mpsc::UnboundedSender<Self::LoopCmd>, loop_handle: super::Handle) -> Self {
-        let proxy_server_manager = Rc::new(RefCell::new(ProxyServerManager::new()));
+        let proxy_handle = loop_handle.clone();
+        let proxy_server_manager = Rc::new(RefCell::new(ProxyServerManager::new(proxy_handle)));
 
         let osd_listen_addr = &params[0];
         let osd_listen_addr = osd_listen_addr.clone().parse().unwrap();
