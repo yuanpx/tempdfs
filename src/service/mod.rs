@@ -41,6 +41,7 @@ use std::net::SocketAddr;
 use std::ops::DerefMut;
 use std::vec::Vec;
 use std::boxed::FnBox;
+use std::io::Result;
 
 
 
@@ -189,7 +190,7 @@ impl <T: 'static> RpcConn<T> {
         send_req(&mut self.sender, &req);
     }
 
-    fn sync_call<REQ: serde::Serialize + handler::Event, RESP: 'static + serde::de::DeserializeOwned, HANDLER:'static + FnOnce(usize, IdType, RESP)>(&mut self, req: REQ, resp_handler: HANDLER) {
+    fn sync_call<REQ: serde::Serialize + handler::Event, RESP: 'static + serde::de::DeserializeOwned, HANDLER:'static + FnOnce(usize, IdType, Result<RESP>)>(&mut self, req: REQ, resp_handler: HANDLER) {
         send_req(&mut self.sender, &req);
         let resp = gen_resp_handler(resp_handler);
         self.pendding_calls.push_back(resp);
@@ -230,12 +231,12 @@ impl <T: 'static + NetEvent> NetEvent for RpcConn<T> {
 
 type BuffHandler= FnBox(usize, IdType, Vec<u8>);
 
-pub  fn gen_resp_handler<RESP:'static + serde::de::DeserializeOwned, HANDLER: 'static + FnOnce(usize, IdType, RESP)>(resp_handler: HANDLER) -> Box<BuffHandler>
+pub  fn gen_resp_handler<RESP:'static + serde::de::DeserializeOwned, HANDLER: 'static + FnOnce(usize, IdType, Result<RESP>)>(resp_handler: HANDLER) -> Box<BuffHandler>
 {
 
     Box::new(move |id, event_id, buf: Vec<u8>| {
         let res : RESP = handler::gen_obj(&buf[..]);
-        resp_handler(id, event_id, res);
+        resp_handler(id, event_id, Ok(res));
     })
 }
 

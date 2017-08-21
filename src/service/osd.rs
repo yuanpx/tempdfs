@@ -22,6 +22,7 @@ use super::transaction::ReplicaTransactionResp;
 use super::replication_log::PartLogManager;
 use futures::Future;
 use std::io;
+use std::io::Result;
 
 use super::part::*;
 
@@ -142,7 +143,7 @@ impl ProxyServerManager {
                 let addr = trans_id_from_part_to_addr(*replica_id);
                 let osd_rpc_conn = osd_manager.borrow_mut().deref_mut().get_osd_rpc_conn(&addr);
                 let (tx, rx) = futures::sync::oneshot::channel::<()>();
-                osd_rpc_conn.borrow_mut().sync_call(replica_transaction,move |id: usize, event_id:u32 , resp: ReplicaTransactionResp| {
+                osd_rpc_conn.borrow_mut().sync_call(replica_transaction,move |id: usize, event_id:u32 , resp: Result<ReplicaTransactionResp>| {
                     tx.send(()).unwrap();
                 } );
                 let req = rx.map(|_|{}).map_err(|_|{});

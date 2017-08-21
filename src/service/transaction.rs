@@ -13,8 +13,8 @@ pub struct ReplicaTransaction {
 }
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ReplicaTransactionResp {
-    part_id: usize,
-    version: usize,
+    pub part_id: usize,
+    pub version: usize,
 }
 
 impl Transaction {
